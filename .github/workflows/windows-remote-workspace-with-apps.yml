@@ -896,31 +896,70 @@ jobs:
                 try { $locked = $mutex.WaitOne(300000) } catch [Threading.AbandonedMutexException] { $locked = $true }
                 if (-not $locked) { throw 'ArtCraft installer queue timeout.' }
                 $data = Invoke-RdpUserTask -Name ArtCraft -TimeoutSeconds 450 -Context @{ Installer=$file; Version=$version } -Script {
-                  $exe = Join-Path $env:LOCALAPPDATA 'Programs\ArtCraft Launcher\artcraft-launcher.exe'
-                  $actualVersion = ''
-                  if (Test-Path -LiteralPath $exe) {
-                    $info = (Get-Item -LiteralPath $exe).VersionInfo
-                    $candidate = [string]$info.ProductVersion
-                    if ($candidate -notmatch '\d+\.\d+\.\d+') { $candidate = [string]$info.FileVersion }
-                    if ($candidate -match '\d+\.\d+\.\d+') { $actualVersion = $Matches[0] }
+                  # The upstream v0.16.x MSI installs into
+                  # %LOCALAPPDATA%\Programs\ArtCraft\Launcher, NOT the older
+                  # %LOCALAPPDATA%\Programs\ArtCraft Launcher directory.
+                  # MSI upgrades can also preserve a previously chosen
+                  # folder, recorded in HKCU. Resolve the actual install
+                  # location using the same registry key as upstream WiX.
+                  function Resolve-ArtCraftExecutable {
+                    $candidatePaths = [Collections.Generic.List[string]]::new()
+                    $installSettings = Get-ItemProperty -Path 'HKCU:\Software\Learning Machines LLC\ArtCraft Launcher' -ErrorAction SilentlyContinue
+                    if ($installSettings -and $installSettings.InstallDir) {
+                      $candidatePaths.Add((Join-Path ([string]$installSettings.InstallDir) 'artcraft-launcher.exe'))
+                    }
+                    try {
+                      $appPathKey = Get-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\artcraft-launcher.exe' -ErrorAction Stop
+                      $registeredExe = [string]$appPathKey.GetValue('')
+                      if ($registeredExe) { $candidatePaths.Add($registeredExe) }
+                    } catch {}
+                    $candidatePaths.Add((Join-Path $env:LOCALAPPDATA 'Programs\ArtCraft\Launcher\artcraft-launcher.exe'))
+                    $candidatePaths.Add((Join-Path $env:LOCALAPPDATA 'Programs\ArtCraft Launcher\artcraft-launcher.exe'))
+                    foreach ($candidatePath in $candidatePaths) {
+                      if ([string]::IsNullOrWhiteSpace($candidatePath)) { continue }
+                      if (Test-Path -LiteralPath $candidatePath -PathType Leaf) {
+                        return (Resolve-Path -LiteralPath $candidatePath).Path
+                      }
+                    }
+                    return $null
                   }
-                  if (-not (Test-Path -LiteralPath $exe) -or $actualVersion -ne [string]$ctx.Version) {
+                  function Get-ArtCraftVersion([string]$path) {
+                    if (-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { return '' }
+                    $info = (Get-Item -LiteralPath $path).VersionInfo
+                    $ver = [string]$info.ProductVersion
+                    if ($ver -notmatch '\d+\.\d+\.\d+') { $ver = [string]$info.FileVersion }
+                    if ($ver -match '\d+\.\d+\.\d+') { return $Matches[0] }
+                    return ''
+                  }
+                  $exe = Resolve-ArtCraftExecutable
+                  $actualVersion = Get-ArtCraftVersion $exe
+                  if (-not $exe -or $actualVersion -ne [string]$ctx.Version) {
                     $log = Join-Path $PSScriptRoot 'msi.log'
                     $args = @('/i', ('"' + $ctx.Installer + '"'), '/qn', '/norestart', 'INSTALLDESKTOPSHORTCUT=0', '/L*v', ('"' + $log + '"'))
                     $proc = Start-Process "$env:SystemRoot\System32\msiexec.exe" -ArgumentList $args -PassThru -Wait
                     if ($proc.ExitCode -notin @(0,3010,1641)) {
-                      if (Test-Path $log) { Get-Content $log -Tail 50 | Out-Host }
+                      if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 50 | Out-Host }
                       throw "ArtCraft Launcher $($ctx.Version) MSI exit code: $($proc.ExitCode)"
                     }
+                    # Re-read HKCU after MSI: install folder can differ from
+                    # old versions and from the default if user customized it.
+                    $exe = Resolve-ArtCraftExecutable
                   }
-                  if (-not (Test-Path -LiteralPath $exe)) { throw 'ArtCraft executable missing after MSI installation.' }
-                  $exeInfo = (Get-Item -LiteralPath $exe).VersionInfo
-                  $candidate = [string]$exeInfo.ProductVersion
-                  if ($candidate -notmatch '\d+\.\d+\.\d+') { $candidate = [string]$exeInfo.FileVersion }
-                  if ($candidate -match '\d+\.\d+\.\d+' -and $Matches[0] -ne [string]$ctx.Version) {
-                    throw "ArtCraft binary version $($Matches[0]) does not match requested version $($ctx.Version)."
+                  if (-not $exe) {
+                    $registryFolder = (Get-ItemProperty -Path 'HKCU:\Software\Learning Machines LLC\ArtCraft Launcher' -ErrorAction SilentlyContinue).InstallDir
+                    if (Test-Path -LiteralPath $log -ErrorAction SilentlyContinue) {
+                      Get-Content -LiteralPath $log -Tail 40 | Out-Host
+                    }
+                    throw "ArtCraft executable not found in registered/new/legacy install paths. MSI InstallDir: $registryFolder"
                   }
-                  [pscustomobject]@{ Executable=$exe; Version=[string]$ctx.Version; FileVersion=$candidate }
+                  $actualVersion = Get-ArtCraftVersion $exe
+                  if ($actualVersion -and $actualVersion -ne [string]$ctx.Version) {
+                    throw "ArtCraft binary version $actualVersion does not match requested release $($ctx.Version)."
+                  }
+                  if (-not $actualVersion) {
+                    Write-Warning 'ArtCraft executable version metadata is unavailable; MSI exit and official installer SHA256 were verified.'
+                  }
+                  [pscustomobject]@{ Executable=$exe; Version=[string]$ctx.Version; FileVersion=$actualVersion }
                 }
                 "ARTCRAFT_EXE=$($data.Executable)" | Add-Content $env:GITHUB_ENV -Encoding UTF8
                 "ARTCRAFT_VERSION=$($data.Version)" | Add-Content $env:GITHUB_ENV -Encoding UTF8
@@ -2131,8 +2170,8 @@ jobs:
           $artCraftTarget = $env:ARTCRAFT_EXE
           if (-not $artCraftTarget -or -not (Test-Path $artCraftTarget)) {
             $artCraftTarget = Resolve-AppTarget `
-              -CandidatePaths @("$artCraftRdpProfile\AppData\Local\Programs\ArtCraft Launcher\artcraft-launcher.exe", "$env:SystemDrive\Users\$env:RDP_USER\AppData\Local\Programs\ArtCraft Launcher\artcraft-launcher.exe") `
-              -SearchRoots @("$artCraftRdpProfile\AppData\Local\Programs\ArtCraft Launcher") `
+              -CandidatePaths @("$artCraftRdpProfile\AppData\Local\Programs\ArtCraft\Launcher\artcraft-launcher.exe", "$artCraftRdpProfile\AppData\Local\Programs\ArtCraft Launcher\artcraft-launcher.exe") `
+              -SearchRoots @("$artCraftRdpProfile\AppData\Local\Programs\ArtCraft\Launcher", "$artCraftRdpProfile\AppData\Local\Programs\ArtCraft Launcher") `
               -ExecutableNames @('artcraft-launcher.exe')
           }
 
@@ -3125,6 +3164,7 @@ jobs:
           ))
 
           $artCraftDetected = (Test-AnyPath @(
+            "$env:SystemDrive\Users\$env:RDP_USER\AppData\Local\Programs\ArtCraft\Launcher\artcraft-launcher.exe",
             "$env:SystemDrive\Users\$env:RDP_USER\AppData\Local\Programs\ArtCraft Launcher\artcraft-launcher.exe",
             $env:ARTCRAFT_EXE
           ))

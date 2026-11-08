@@ -2424,11 +2424,13 @@ jobs:
           $python = (Get-Command python.exe -ErrorAction Stop).Source
           & $python -m pip install --disable-pip-version-check --no-input 'websockify==0.13.0'
           if ($LASTEXITCODE -ne 0) { throw 'websockify installation failed.' }
+          Write-Host '[noVNC 1/5] websockify installed; configuring direct HTTP listener...'
 
           # Web endpoint listens ONLY on the Tailscale IPv4, with a tailnet-only firewall rule.
           $rule = 'WFS-noVNC-Tailscale'
           Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
           New-NetFirewallRule -Name $rule -DisplayName 'WFS noVNC Tailscale only' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 6080 -LocalAddress $env:TAILSCALE_IP -RemoteAddress '100.64.0.0/10' -Profile Any -ErrorAction Stop | Out-Null
+          Write-Host '[noVNC 2/5] Firewall ready; starting websockify on the Tailscale IPv4.'
           $logOut = Join-Path $base 'websockify.out.log'
           $logErr = Join-Path $base 'websockify.err.log'
           $args = @('-m', 'websockify', '--web', ('"' + $webRoot + '"'), "$($env:TAILSCALE_IP):6080", '127.0.0.1:5900')
@@ -2450,6 +2452,7 @@ jobs:
             if (Test-Path $logErr) { Get-Content $logErr -Tail 30 | Out-Host }
             throw 'noVNC HTTP endpoint did not respond on the Tailscale IPv4.'
           }
+          Write-Host '[noVNC 3/5] Direct web page is healthy; optional HTTPS configuration begins.'
           $directUrl = $url
           $httpsUrl = $null
           # This local-only proxy is a separate backend for Tailscale Serve.
@@ -2488,17 +2491,36 @@ jobs:
                 # Serve is private to the tailnet; never use Funnel (public).
                 # HTTPS certificates/Serve must be enabled in tailnet settings.
                 # A setup consent link may appear in the output if not enabled.
-                $serveOutput = & $tsExe serve --bg --https=443 http://127.0.0.1:6081 2>&1
-                if ($LASTEXITCODE -ne 0) {
-                  Write-Warning 'Tailscale Serve HTTPS not enabled or not authorized in this tailnet. Open the consent/setup URL in the Tailscale output, then run a new workflow.'
-                  $serveOutput | ForEach-Object { Write-Host ([string]$_) }
+                # A new tailnet can require interactive consent to enable HTTPS.
+                # Never let the CLI block the entire runner: use --yes and a
+                # hard 15 second timeout, then fall back to the direct HTTP URL.
+                Write-Host '[noVNC 4/5] Trying Tailscale Serve HTTPS with a strict 15s timeout...'
+                $serveStdout = Join-Path $base 'tailscale-serve.out.log'
+                $serveStderr = Join-Path $base 'tailscale-serve.err.log'
+                $serveArgs = @('serve', '--bg', '--yes', '--https=443', 'http://127.0.0.1:6081')
+                $serveProc = Start-Process -FilePath $tsExe -ArgumentList $serveArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput $serveStdout -RedirectStandardError $serveStderr
+                if (-not $serveProc.WaitForExit(15000)) {
+                  try { $serveProc.Kill($true) } catch { Stop-Process -Id $serveProc.Id -Force -ErrorAction SilentlyContinue }
+                  Write-Warning 'Tailscale Serve needs consent or timed out. HTTP direct access remains enabled.'
+                } elseif ($serveProc.ExitCode -ne 0) {
+                  Write-Warning "Tailscale Serve returned code $($serveProc.ExitCode); HTTPS skipped. Enable HTTPS certificates/Serve in your tailnet."
                 } else {
-                  $serveStatus = & $tsExe serve status 2>&1
-                  if ($LASTEXITCODE -eq 0) {
-                    $httpsUrl = "https://$fqdn/vnc.html"
-                    Write-Host "✅ Tailscale Serve HTTPS configured: $httpsUrl"
+                  $serveStatusOut = Join-Path $base 'tailscale-serve-status.out.log'
+                  $serveStatusErr = Join-Path $base 'tailscale-serve-status.err.log'
+                  $statusProc = Start-Process -FilePath $tsExe -ArgumentList @('serve','status') -WindowStyle Hidden -PassThru -RedirectStandardOutput $serveStatusOut -RedirectStandardError $serveStatusErr
+                  if (-not $statusProc.WaitForExit(10000)) {
+                    try { $statusProc.Kill($true) } catch { Stop-Process -Id $statusProc.Id -Force -ErrorAction SilentlyContinue }
+                    Write-Warning 'Tailscale Serve status timed out; HTTPS URL is not advertised.'
+                  } elseif ($statusProc.ExitCode -eq 0) {
+                    $statusText = Get-Content -LiteralPath $serveStatusOut -Raw -ErrorAction SilentlyContinue
+                    if ($statusText -match '127\.0\.0\.1:6081' -and $statusText -match 'https://') {
+                      $httpsUrl = "https://$fqdn/vnc.html"
+                      Write-Host "Tailscale Serve HTTPS active: $httpsUrl"
+                    } else {
+                      Write-Warning 'Tailscale Serve status did not confirm the HTTPS target; HTTP fallback remains primary.'
+                    }
                   } else {
-                    Write-Warning 'Tailscale Serve command ran, but status verification failed. Using direct IP fallback.'
+                    Write-Warning 'Tailscale Serve status command failed; using HTTP fallback.'
                   }
                 }
               }
@@ -2507,6 +2529,7 @@ jobs:
             Write-Warning "Optional Tailscale Serve setup skipped: $($_.Exception.Message)"
           }
 
+          Write-Host '[noVNC 5/5] Publishing URL details; optional Serve attempt finished.'
           $preferredUrl = if ($httpsUrl) { $httpsUrl } else { $directUrl }
           "NOVNC_URL=$preferredUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           "NOVNC_DIRECT_URL=$directUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
@@ -2881,7 +2904,7 @@ jobs:
 
           $summaryLines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
-      - name: ⏳ Show Access Info & Keep Alive
+      - name: 🟢 Remote READY - Keep Alive (session intentionally remains running)
         shell: pwsh
         run: |
           $passwordMode = '${{ inputs.rdp_password_mode }}'
@@ -2937,10 +2960,13 @@ jobs:
             $seconds = $hours * 3600
             $elapsed = 0
 
+            Write-Host "Remote is ready. This step intentionally stays active for $hours hour(s)."
             while ($elapsed -lt $seconds) {
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] ✅ Session active - elapsed $elapsed seconds"
-              Start-Sleep -Seconds 300
-              $elapsed += 300
+              $minutesLeft = [Math]::Ceiling(($seconds - $elapsed) / 60)
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Remote READY - $minutesLeft minute(s) remaining"
+              $sleepFor = [Math]::Min(60, $seconds - $elapsed)
+              Start-Sleep -Seconds $sleepFor
+              $elapsed += $sleepFor
             }
 
             Write-Host "Session completed."

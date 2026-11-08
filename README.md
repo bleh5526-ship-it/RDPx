@@ -24,7 +24,7 @@ WFS Windows Remote Workspace menggunakan **GitHub-hosted Windows runner sementar
 | Fitur | Detail |
 |:--|:--|
 | 🖥️ Mode | `rdp`, `novnc`, atau `both` |
-| 🔐 Jaringan | Tailscale privat; **tidak ada Cloudflare Tunnel** |
+| 🔐 Jaringan | Tailscale privat; tanpa tunnel publik |
 | 🌐 noVNC | Satu transport dipilih per run: TCP `6082` atau HTTPS `443` |
 | ⏳ Durasi | Pilihan `1`, `3`, atau `6` jam setelah setup, tetap tunduk pada batas job total `360` menit |
 | 🔎 Verifikasi | Pemeriksaan HTTP, WebSocket, dan handshake RFB/VNC |
@@ -201,7 +201,7 @@ Form workflow menyediakan pilihan IDE (VS Code/Antigravity), editor video (CapCu
 
 ## 🔒 Keamanan dan batasan
 
-- Akses remote ditujukan ke **tailnet**, bukan tautan publik atau Cloudflare Tunnel.
+- Akses remote ditujukan ke **tailnet**, bukan tautan publik.
 - Jangan membuka port RDP/VNC ke internet atau membagikan auth key/password.
 - Untuk akun remote, gunakan password kuat dan hindari mempublikasikan log yang mengandung kredensial acak.
 - noVNC dan RDP bisa menampilkan sesi Windows berbeda; tidak ada jaminan semua aplikasi memiliki UI aktif di console session.

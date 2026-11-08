@@ -2,141 +2,154 @@
 
 # 🐧 WFS Linux Remote Workspace
 
-### 5 Linux distros · 4 desktop environments · 20 combinations
+### RDP · noVNC/Selkies · Both · 20 desktop combinations
 
-**Desktop Linux yang responsif melalui browser, privat dengan Tailscale, dijalankan dari GitHub Actions.**
+**Workspace Linux sementara di GitHub Actions: pilihan aplikasi setara menu Windows, koneksi privat Tailscale, dan konfigurasi akun/password yang sama.**
 
-[![Linux](https://img.shields.io/badge/Linux-5%20Distros-17805C?style=for-the-badge&logo=linux)](https://docs.linuxserver.io/images/docker-webtop/)
-[![Desktop](https://img.shields.io/badge/UI-Xfce%20%7C%20KDE%20%7C%20MATE%20%7C%20i3-2255DD?style=for-the-badge)](https://docs.linuxserver.io/selkies/user-guide/)
-[![Tailscale](https://img.shields.io/badge/Tailscale-Private-242424?style=for-the-badge)](https://tailscale.com/)
+[![Linux CI](https://img.shields.io/github/actions/workflow/status/wawanwfs/RDP/linux-workspace-checks.yml?branch=main&style=for-the-badge&logo=githubactions&label=Linux%20Tests)](https://github.com/wawanwfs/RDP/actions/workflows/linux-workspace-checks.yml)
+[![Tailscale](https://img.shields.io/badge/Tailscale-Private%20Only-242424?style=for-the-badge)](https://tailscale.com/)
+[![Linux](https://img.shields.io/badge/Desktop-20%20Options-168566?style=for-the-badge&logo=linux)](https://docs.linuxserver.io/images/docker-webtop/)
 
-[**▶ Jalankan Linux Desktop**](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml) · [Workflow Windows](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml) · [README Root](../README.md)
+[**▶ Jalankan Linux Workspace**](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml) · [**▶ Windows Workspace**](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml) · [README Root](../README.md)
 
 </div>
 
 ---
 
-## ✨ Pilihan Linux dan Desktop
+## 🔥 Fitur dan pilihan GUI
+
+Workflow Linux menggunakan **Ubuntu 24.04 GitHub-hosted runner** sebagai host. Distro yang dipilih dijalankan sebagai **container LinuxServer Webtop**, bukan VM/kernel distro terpisah. UI browser memakai Selkies, sedangkan native RDP memakai **xrdp dengan sesi Xfce tersendiri**.
 
 | Distro | Xfce | MATE | KDE Plasma | i3 |
 |:--|:--:|:--:|:--:|:--:|
-| **Debian** | ✅ | ✅ | ✅ | ✅ |
-| **Ubuntu** | ✅ | ✅ | ✅ | ✅ |
-| **Fedora** | ✅ | ✅ | ✅ | ✅ |
-| **Arch Linux** | ✅ | ✅ | ✅ | ✅ |
-| **Alpine Linux** | ✅ | ✅ | ✅ | ✅ |
+| Debian | ✅ | ✅ | ✅ | ✅ |
+| Ubuntu | ✅ | ✅ | ✅ | ✅ |
+| Fedora | ✅ | ✅ | ✅ | ✅ |
+| Arch Linux | ✅ | ✅ | ✅ | ✅ |
+| Alpine Linux | ✅ | ✅ | ✅ | ✅ |
 
-**Xfce** adalah pilihan default terbaik untuk pemakaian ringan dan nyaman. **MATE** cocok untuk tampilan desktop klasik. **KDE Plasma** lebih modern dan kaya pengaturan tetapi menggunakan lebih banyak sumber daya. **i3** paling minimalis dan efisien tetapi lebih cocok untuk pengguna yang nyaman memakai keyboard.
+Tabel di atas adalah **kombinasi image desktop untuk browser**. Penggunaan native xrdp pada Arch **belum didukung**, karena paketnya berasal dari AUR. Untuk RDP pilih Debian (disarankan), Ubuntu, Fedora, atau Alpine. Xrdp memasang sesi Xfce sendiri walaupun browser memakai desktop lain.
 
-> [!IMPORTANT]
-> Kelima distro berjalan sebagai **container LinuxServer.io Webtop** pada runner GitHub **Ubuntu 24.04**, bukan VM/kernel terpisah. Ini menyediakan userland dan tampilan dari distro yang dipilih, tetapi **tidak dapat mengganti kernel host**. Desktop menggunakan **Selkies**, bukan noVNC/RDP native; aksesnya melalui browser dengan responsivitas dan auto-resize. Versi distro mengikuti image upstream yang dipilih; tidak dipatok ke Debian 12/13 tertentu.
+**Rekomendasi:** Debian + Xfce untuk performa yang stabil dan ringan; Ubuntu + Xfce untuk kompatibilitas aplikasi; KDE Plasma untuk UI modern; i3 untuk pengguna yang mengutamakan keyboard.
 
-## 🚀 Cara menjalankan
+## 🖥️ Jenis remote sama dengan Windows
 
-1. Di [GitHub Repository Secrets](https://github.com/wawanwfs/RDP/settings/secrets/actions), gunakan secret `TAILSCALE_AUTH_KEY` yang sudah berfungsi pada workflow Windows. Buat secret baru **`LINUX_DESKTOP_PASSWORD`** dengan password kuat minimal **12 karakter**.
-2. Pasang dan login [Tailscale](https://tailscale.com/download) di komputer/Android yang akan digunakan. Pastikan berada dalam tailnet yang sama dan peraturan ACL/grants mengizinkan akses.
-3. Buka [**WFS Linux Remote Workspace Actions**](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml) → **Run workflow** → `main`. Pilih distro, desktop, transport, aplikasi dan durasi.
-4. Buka URL yang muncul pada langkah **Publish exactly one private HTTPS browser endpoint** atau Actions Summary dari **run aktif**. Username: **`wfs`**. Password: nilai secret `LINUX_DESKTOP_PASSWORD`.
+| `remote_access` | Cara masuk | Port Tailscale | Autentikasi |
+|:--|:--|:--|:--|
+| `rdp` | Windows `mstsc` / klien Microsoft RDP | TCP `3389` | Username `rdp_username` + `RDP_PASSWORD` |
+| `novnc` | Browser (sebenarnya **Selkies Webtop**, bukan VNC tradisional) | HTTPS `443` atau TLS/TCP `6082` | Username `web_username` + `VNC_PASSWORD` |
+| `both` | **Kedua akses di atas sekaligus** | TCP `3389` **dan** port web terpilih | Password terpisah untuk masing-masing akses |
 
-| Input workflow | Pilihan | Default |
+**RDP dan browser merupakan dua sesi desktop yang berbeda**, tidak mencerminkan layar yang sama. Container hanya mengikat port backend pada `127.0.0.1`; Tailscale Serve meneruskan port yang dipilih melalui tailnet, tanpa Cloudflare/Funnel/port forwarding internet.
+
+Pada mode web, layanan otomatis menyesuaikan ukuran browser. Fullscreen monitor tetap memakai **F11** atau kontrol fullscreen browser.
+
+## 🔐 Pakai GitHub Secrets Windows yang sudah ada
+
+Tidak perlu membuat secret password Linux baru.
+
+| Secret | Digunakan untuk | Wajib jika |
 |:--|:--|:--|
-| `distro` | debian, ubuntu, fedora, arch, alpine | debian |
-| `desktop` | xfce, mate, kde, i3 | xfce |
-| `duration_hours` | 1, 3, 6 jam | 6 |
-| `transport` | auto, tailnet_https, tailnet_tls_tcp | auto |
-| `apps_bundle` | none, developer, office, media, all | none |
-| `install_artcraft` | true atau false | false |
+| `TAILSCALE_AUTH_KEY` | Join runner Linux ke Tailscale privat | Semua mode |
+| `RDP_PASSWORD` | Login xrdp Linux | `rdp` atau `both` |
+| `VNC_PASSWORD` | Login desktop web Selkies Linux | `novnc` atau `both` |
 
-## 🔐 Arsitektur aman
+Simpan di [**Settings → Secrets and variables → Actions**](https://github.com/wawanwfs/RDP/settings/secrets/actions). Password minimal 8 byte dan tidak boleh mengandung newline. **Nama secret dan nilainya sama dengan yang sudah dipakai workflow Windows.**
 
-```text
-          GitHub Actions — Ubuntu 24.04 ephemeral runner
-                          │
-             LinuxServer Webtop container
-             Debian / Ubuntu / Fedora / Arch / Alpine
-                Xfce / MATE / KDE Plasma / i3
-                          │
-             Selkies Desktop HTTPS + Login
-              ↙                         ↘
-  127.0.0.1:13000 (HTTP)        127.0.0.1:13001 (HTTPS)
-              │                          │
-     Tailscale Serve HTTPS 443   Tailscale Serve TCP 6082
-        valid tailnet TLS          native Webtop HTTPS
-              └────────────┬─────────────┘
-                           │
-            SATU remote endpoint saja
-                           │
-          Perangkat dengan Tailscale aktif
-```
+### Nama runner, akun, dan mode password
 
-**Mode `auto`**: mencoba HTTPS resmi Tailscale `https://hostname.ts.net/`, lalu jika gagal beralih ke `https://100.x.x.x:6082/`. Port TCP 6082 meneruskan HTTPS milik Webtop, sehingga **sertifikat self-signed akan menyebabkan peringatan browser**. Periksa alamat IP dari Actions Summary lalu terima peringatan hanya jika Anda yakin sedang mengakses runner milik sendiri. Untuk menghindari peringatan, aktifkan **MagicDNS + HTTPS Certificates** pada tailnet lalu gunakan `tailnet_https`. Koneksi tidak menggunakan Cloudflare, Funnel atau port forwarding router.
+| Input | Fungsi | Default |
+|:--|:--|:--|
+| `tailscale_hostname` | Nama dasar node Tailscale (huruf kecil, angka, strip) | `wfs-linux` |
+| `hostname_mode` | `same_each_run` atau `unique_each_run` | `unique_each_run` |
+| `rdp_username` | Nama akun Linux yang login via RDP | `wfsrdp` |
+| `web_username` | Nama akun login browser Webtop | `wfs` |
+| `rdp_password_mode` | `same_from_secret` atau `random_each_run` | `same_from_secret` |
+| `vnc_password_mode` | `same_from_secret` atau `random_each_run` | `same_from_secret` |
 
-Seluruh port Docker diikat ke **loopback `127.0.0.1`**, bukan IP publik. Password Webtop dibaca dari file yang dihasilkan dari GitHub Secret dan **tidak dicetak pada log**. Login browser adalah lapisan tambahan; tetap gunakan tailnet ACL/grants yang ketat. Akses ke desktop dapat memberikan sudo di dalam container.
+`unique_each_run` menambahkan GitHub Run ID pada hostname, menghindari bentrok dengan runner lain. `same_each_run` mempertahankan nama dasar (jangan aktifkan dua runner dengan hostname sama sekaligus).
 
-## 📦 Instalasi aplikasi (opsional)
+**Password tetap:** pilih `same_from_secret` untuk memakai nilai `RDP_PASSWORD` dan `VNC_PASSWORD` apa adanya.
 
-| Bundle | Paket utama |
-|:--|:--|
-| `none` | Hanya aplikasi bawaan image, start tercepat |
-| `developer` | Git, curl, wget, Python, Node.js/npm, Vim |
-| `office` | LibreOffice |
-| `media` | GIMP, VLC |
-| `all` | Developer + Office + Media |
-
-`install_artcraft=true` akan mengambil **rilis stabil ArtCraft Launcher terbaru** dari [repository upstream resmi](https://github.com/storytold/craft-launcher/releases/latest), memvalidasi URL, ukuran dan SHA-256 dari metadata GitHub sebelum memasang file **DEB** (Debian/Ubuntu), **RPM** (Fedora), atau **pkg.tar.zst** (Arch). Alpine menggunakan musl dan belum didukung paket native ArtCraft sehingga instalasi dilewati dengan peringatan.
-
-Instalasi aplikasi opsional bersifat **best effort**; jika repository paket atau dependensi bermasalah, desktop remote yang sudah hidup tetap dipertahankan. Penginstalan paket tambahan dapat membuat waktu setup jauh lebih panjang.
-
-## 🖥️ Auto-resize dan layar penuh
-
-Desktop Selkies sudah menggunakan `SELKIES_ENABLE_RESIZE=true`, sehingga menyesuaikan ukuran jendela browser. Tidak perlu mengubah resolusi Windows/driver virtual seperti workflow sebelumnya. Gunakan **F11** atau tombol fullscreen browser untuk mengisi layar monitor. Mode KDE dan aplikasi grafis berat dapat lebih lambat pada CPU runner tanpa GPU; gunakan Debian atau Alpine **Xfce** jika mengutamakan responsivitas.
-
-## 🛠️ Troubleshooting
-
-Dari **PowerShell Windows** dengan IP terbaru dari Actions Summary:
+**Password per-run:** pilih `random_each_run`. Supaya tidak membocorkan password dalam log repository publik, Linux menghasilkan password 24 karakter heksadesimal menggunakan HMAC-SHA256 dari **secret asal + GitHub Run ID + jenis akses**. Tidak ada password mentah yang dicetak di Actions. Untuk memperoleh password per-run, hitung di PC Anda sendiri:
 
 ```powershell
+# Masukkan GitHub Actions Run ID yang aktif:
+$RunId = "42500000000"
+# Pilih "rdp" atau "web":
+$Type = "rdp"
+
+# Masukkan nilai secret RDP_PASSWORD untuk rdp, atau VNC_PASSWORD untuk web.
+$Secure = Read-Host "Password secret asal" -AsSecureString
+$Plain = (New-Object System.Net.NetworkCredential("", $Secure)).Password
+$KeyBytes = [Text.Encoding]::UTF8.GetBytes($Plain)
+$Message = [Text.Encoding]::UTF8.GetBytes(('wfs:' + $RunId + ':' + $Type))
+$HMAC = [System.Security.Cryptography.HMACSHA256]::new($KeyBytes)
+try {
+  $Digest = $HMAC.ComputeHash($Message)
+  $Hex = -join ($Digest | ForEach-Object { $_.ToString("x2") })
+  Write-Host ("Password per-run: " + $Hex.Substring(0,24))
+} finally {
+  $HMAC.Dispose()
+  $Plain = $null
+  $KeyBytes = $null
+}
+```
+
+Angka `$RunId` adalah nomor dari URL Actions run Anda, **bukan** commit SHA atau nomor job. Gunakan jenis `rdp` untuk xrdp, `web` untuk akses browser. Jangan kirim hasil atau secret asal ke issue/log publik.
+
+## 🚀 Langkah penggunaan
+
+1. Pastikan Tailscale terpasang pada PC/HP yang akan mengakses runner dan secret `TAILSCALE_AUTH_KEY` telah tersedia.
+2. Buka [Linux Remote Workspace Actions](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml) → **Run workflow** → branch `main`.
+3. Pilih distro, desktop, `remote_access`, hostname dan mode password. Untuk uji awal gunakan Debian, Xfce, `novnc`, `same_from_secret`, dan tanpa aplikasi tambahan.
+4. Tunggu **Publish selected private RDP and/or web endpoints through Tailscale**. Lihat **Actions Summary** untuk IP RDP, URL web, username dan jenis password. Jangan memakai URL runner lama.
+5. Untuk RDP: di Windows tekan `Win + R` → `mstsc` → masukkan `100.x.x.x:3389` → login dengan `rdp_username` dan password RDP. Untuk web: buka URL HTTPS dan login dengan `web_username` dan password VNC.
+
+Mode `transport=auto` mencoba Tailscale HTTPS `443` lalu fallback HTTPS Webtop pada TCP `6082`. Fallback menggunakan sertifikat self-signed Webtop, sehingga bisa menampilkan peringatan browser. Pastikan IP sesuai Summary. Pilih `tailnet_https` hanya bila HTTPS Certificates/MagicDNS aktif di tailnet.
+
+## 📦 Aplikasi — kategori sama dengan Windows
+
+| Menu | Pilihan | Implementasi Linux |
+|:--|:--|:--|
+| `ide_choice` | none, vscode, antigravity, both | VS Code: repo APT Microsoft di Debian/Ubuntu; Antigravity: instalasi GUI manual hingga paket diverifikasi |
+| `editor_choice` | none, capcut, shotcut, both | Shotcut melalui package manager; CapCut native Linux tidak didukung |
+| `metatrader_choice` | none, mt4, mt5, both | Wine/manual; **bukan** MetaTrader native Linux |
+| `router_choice` | none, 9router, omniroute, both | Dicoba via npm package yang dipilih |
+| `coding_agent_choice` | none, codex, claude, both | npm `@openai/codex` dan `@anthropic-ai/claude-code` |
+| `ai_agent_choice` | none, hermes, openclaw, opencode, both, all | OpenClaw/OpenCode via npm; Hermes memerlukan instalasi/auth manual |
+| `install_artcraft` | true/false | Rilis stabil GitHub resmi, DEB/RPM/Arch; Alpine dilewati |
+| `apps_bundle` | none, developer, office, media, all | Paket Git/Python/Node, LibreOffice, GIMP, VLC |
+
+Instalasi aplikasi opsional **tidak mematikan desktop jika gagal**. Actions Summary menampilkan **INSTALLED**, **FAILED**, **MANUAL**, atau **UNSUPPORTED** per item. Pemilihan aplikasi berarti instruksi untuk *mencoba instalasi*, bukan jaminan telah terpasang dan berfungsi. Untuk CLI AI biasanya perlu autentikasi akun/API tambahan setelah masuk ke Linux.
+
+## ⏳ Keep Alive dan keamanan
+
+Pilihan `duration_hours` adalah `1`, `3`, atau `6` jam dari sesi ready, dengan **batas total job 360 menit** termasuk instalasi, pull image, dan setup. GitHub runner bersifat sementara: data akan hilang setelah selesai/cancel/timeout.
+
+**Jangan mematikan runner GitHub atau container dari terminal desktop.** Untuk keluar tanpa mengakhiri sesi, cukup tutup tab web atau disconnect klien RDP. Untuk menghentikan runner, pilih **Cancel workflow** di Actions. Cleanup mencoba menghapus container dan file password, sedangkan Tailscale Action menjalankan logout pada post-step.
+
+RDP dan web hanya bisa dijangkau dari **tailnet** yang memiliki izin ACL/grants sesuai konfigurasi Anda. Jangan membagikan password, auth key, URL sensitif, atau membuka port Docker ke internet publik.
+
+## 🧪 Pengujian dan troubleshooting
+
+Pengujian otomatis yang tersedia memvalidasi workflow YAML, shell, pemakaian secret, dan melakukan smoke test Webtop Debian Xfce pada port loopback. **RDP lintas perangkat dan seluruh 20 kombinasi distro/desktop belum dinyatakan lulus** kecuali sudah terbukti lewat run tersendiri.
+
+```powershell
+# Ganti dengan IP Tailscale dari Actions Summary run aktif.
 tailscale ping 100.x.x.x
-Test-NetConnection 100.x.x.x -Port 6082
-# Buka https://100.x.x.x:6082/ untuk fallback TLS
-# Mode HTTPS resmi menggunakan hostname .ts.net dan port 443.
+Test-NetConnection 100.x.x.x -Port 3389  # hanya rdp / both
+Test-NetConnection 100.x.x.x -Port 6082  # hanya web TCP fallback
 ```
 
-Pada log GitHub Actions, langkah Start, Publish, dan Keep Alive memeriksa kondisi container dan Tailscale. Untuk mendiagnosis container dari shell host runner:
-
-```bash
-docker ps
-docker logs --tail 50 wfs-linux-webtop
-tailscale serve status
-tailscale ip -4
-```
-
-| Gejala | Solusi |
-|:--|:--|
-| Password tidak ditemukan | Tambahkan `LINUX_DESKTOP_PASSWORD` minimal 12 karakter |
-| Pull image gagal | Pilih Debian + Xfce atau ulangi saat registry LinuxServer tersedia |
-| Webtop local HTTP check gagal | Periksa Docker logs, auth, dan startup desktop |
-| HTTPS resmi timeout | Gunakan `transport=auto` atau aktifkan HTTPS Certificates |
-| Sertifikat tidak valid pada 6082 | Normal untuk TLS self-signed Webtop; gunakan port 443 untuk trusted certificate |
-| Layar kosong atau terlambat | Periksa browser Console/Network dan log container, coba Xfce |
-| ArtCraft / bundle gagal | Instalasi opsional tidak memutus akses desktop; baca step terkait |
-
-## ⏳ Keep Alive dan batas platform
-
-Pilihan **1/3/6 jam** dihitung sejak remote selesai disiapkan, tetapi **total GitHub Actions job dibatasi 360 menit** termasuk pull image, instalasi dan setup. Sesudah mencapai batas, runner berhenti dan datanya hilang. Jangan menutup atau mematikan proses GitHub runner dari dalam desktop; untuk meninggalkan tampilan cukup tutup tab browser. Untuk menghentikan sesi, gunakan **Cancel workflow** di GitHub Actions. Cleanup mencoba menghentikan container dan menghapus file password; Tailscale GitHub Action menjalankan logout pada post-step.
-
-**Bukan hosting permanen** dan tidak ada persistence lintas run. Backup file penting sebelum mengakhiri pekerjaan.
-
-## 📚 Referensi
-
-Sistem memakai [LinuxServer Webtop](https://docs.linuxserver.io/images/docker-webtop/), [Selkies](https://docs.linuxserver.io/selkies/user-guide/), [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve), dan [official Tailscale GitHub Action](https://tailscale.com/docs/integrations/github/github-action). Workflow Windows tidak diubah; Linux adalah workflow baru yang terpisah.
+Jika RDP error, periksa langkah **Start native Linux xrdp server**. Paket xrdp/Xorg bergantung pada repositori distro dan sesi RDP Xfce. Jika web gagal, lihat status Tailscale Serve dan log container Webtop. Untuk masalah paket tertentu, baca tabel aplikasi di Summary.
 
 ---
 
 <div align="center">
 
-**WFS Tech — Linux Anywhere, Privately.**
+**WFS Tech • Windows & Linux Remote Workspace**
 
-[**▶ Run Linux Workspace**](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml)
+[**▶ Linux Actions**](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml) · [**▶ Windows Actions**](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml) · [Root README](../README.md)
 
 </div>

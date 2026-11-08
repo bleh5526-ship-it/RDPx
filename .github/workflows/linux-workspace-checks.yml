@@ -74,6 +74,12 @@ jobs:
               assert required in runtime, required
           assert "tailscale funnel" not in runtime.lower()
           assert "cloudflared" not in runtime.lower()
+          # tailscale/github-action already supplies its own routing flags.
+          # Duplicated --accept-routes causes tailscale up to fail.
+          ts_steps = [s for s in job["steps"] if s.get("uses", "").startswith("tailscale/github-action@")]
+          assert len(ts_steps) == 1, "Expected exactly one Tailscale join action"
+          assert "--accept-routes" not in ts_steps[0].get("with", {}).get("args", "")
+          assert "--accept-dns" not in ts_steps[0].get("with", {}).get("args", "")
           assert pathlib.Path("linux/setup-rdp.sh").is_file()
           print("PASS: Linux workflow YAML, 20 desktop variants, secret use, loopback-only ports and cleanup")
           PY

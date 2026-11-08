@@ -97,70 +97,108 @@ probe() {
 }
 publish() {
   validate
-  command -v tailscale >/dev/null || die "Tailscale CLI missing."
-  local ip fqdn="" url="" transport=tailnet_tls_tcp
+  command -v tailscale >/dev/null || die "Tailscale CLI is not installed."
+  local ip fqdn="" browser_url="" browser_transport=none rdp_address="" status
   ip=$(tailscale ip -4 | head -1)
-  [[ "$ip" =~ ^100\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Tailscale IPv4 missing."
+  [[ "$ip" =~ ^100\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "No Tailscale IPv4."
   timeout 15s tailscale serve reset >/dev/null 2>&1 || true
-  if [ "$WFS_TRANSPORT" != tailnet_tls_tcp ]; then
-    fqdn=$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))')
-    if [[ "$fqdn" =~ \.ts\.net$ ]]; then
-      notice "Attempting trusted Tailscale HTTPS on 443 (75-second limit)."
-      if timeout 75s tailscale serve --bg --yes --https=443 http://127.0.0.1:13000; then
-        if probe "https://$fqdn/" trusted; then
-          url="https://$fqdn/"
-          transport=tailnet_https
+
+  if [ "$WFS_REMOTE" = novnc ] || [ "$WFS_REMOTE" = both ]; then
+    browser_transport=tailnet_tls_tcp
+    if [ "$WFS_TRANSPORT" != tailnet_tls_tcp ]; then
+      fqdn=$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))')
+      if [[ "$fqdn" =~ \.ts\.net$ ]]; then
+        notice "Attempting tailnet HTTPS 443 (max 75 seconds)."
+        if timeout 75s tailscale serve --bg --yes --https=443 http://127.0.0.1:13000; then
+          if probe "https://$fqdn/" trusted; then
+            browser_url="https://$fqdn/"
+            browser_transport=tailnet_https
+          fi
         fi
       fi
+      if [ "$browser_transport" != tailnet_https ] && [ "$WFS_TRANSPORT" = tailnet_https ]; then
+        die "Trusted Tailscale HTTPS unavailable; choose auto or enable HTTPS Certificates."
+      fi
     fi
-    if [ "$transport" != tailnet_https ] && [ "$WFS_TRANSPORT" = tailnet_https ]; then
-      die "Tailscale HTTPS/certificate unavailable. Enable MagicDNS+HTTPS or choose auto."
-    fi
-  fi
-  if [ "$transport" = tailnet_tls_tcp ]; then
-    notice "Using private TLS-over-Tailscale TCP port 6082 (self-signed Webtop certificate)."
-    timeout 15s tailscale serve reset >/dev/null 2>&1 || true
-    timeout 30s tailscale serve --bg --yes --tcp=6082 tcp://127.0.0.1:13001
-    local serve_state
-    serve_state=$(timeout 15s tailscale serve status || true)
-    [[ "$serve_state" == *6082* && "$serve_state" == *13001* ]] ||
-      die "TCP Serve was not mapped from port 6082 to localhost:13001."
-    url="https://$ip:6082/"
-    if ! probe "$url" selfsigned; then
-      notice "Warning: self-probe over own Tailscale IP failed, despite verified Serve mapping. External-client reachability is NOT verified."
+    if [ "$browser_transport" = tailnet_tls_tcp ]; then
+      timeout 15s tailscale serve reset >/dev/null 2>&1 || true
+      timeout 30s tailscale serve --bg --yes --tcp=6082 tcp://127.0.0.1:13001
+      browser_url="https://$ip:6082/"
+      if ! probe "$browser_url" selfsigned; then
+        notice "Local Tailscale-IP self-probe failed; checking Serve mapping instead."
+      fi
     fi
   fi
-  echo "WFS_LINUX_URL=$url" >> "$GITHUB_ENV"
-  echo "WFS_LINUX_IP=$ip" >> "$GITHUB_ENV"
-  echo "WFS_ACTIVE_TRANSPORT=$transport" >> "$GITHUB_ENV"
-  notice "Private browser URL: $url"
-  notice "Transport: $transport. No Cloudflare or Funnel."
-  echo "::notice title=Linux private desktop::$url"
+
+  if [ "$WFS_REMOTE" = rdp ] || [ "$WFS_REMOTE" = both ]; then
+    [ "${WFS_RDP_READY:-0}" = 1 ] || die "xrdp backend not verified."
+    timeout 30s tailscale serve --bg --yes --tcp=3389 tcp://127.0.0.1:13389
+    rdp_address="$ip:3389"
+  fi
+
+  status=$(timeout 15s tailscale serve status)
+  if [ "$WFS_REMOTE" = rdp ] || [ "$WFS_REMOTE" = both ]; then
+    [[ "$status" == *3389* && "$status" == *13389* ]] || die "RDP Serve 3389 -> 13389 not verified."
+  fi
+  if [ "$WFS_REMOTE" = novnc ] || [ "$WFS_REMOTE" = both ]; then
+    if [ "$browser_transport" = tailnet_tls_tcp ]; then
+      [[ "$status" == *6082* && "$status" == *13001* ]] || die "Web Serve 6082 -> 13001 not verified."
+    else
+      [[ "$status" == *443* && "$status" == *13000* ]] || die "HTTPS Serve 443 -> 13000 not verified."
+    fi
+  fi
+  {
+    echo "WFS_LINUX_IP=$ip"
+    echo "WFS_LINUX_URL=$browser_url"
+    echo "WFS_RDP_ADDRESS=$rdp_address"
+    echo "WFS_ACTIVE_TRANSPORT=$browser_transport"
+  } >> "$GITHUB_ENV"
+  notice "Tailscale private RDP: ${rdp_address:-disabled}. Web: ${browser_url:-disabled}."
+  notice "Credentials: wfsrdp / RDP_PASSWORD and wfs / VNC_PASSWORD."
+  [ -z "$browser_url" ] || echo "::notice title=Linux Web Remote::$browser_url"
+  [ -z "$rdp_address" ] || echo "::notice title=Linux Native RDP::$rdp_address"
 }
+
 summary() {
   cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-## Linux Remote Workspace — READY
+## 🐧 Linux Remote Workspace — READY
 
 | Setting | Value |
 |:--|:--|
 | Distro / desktop | **$WFS_DISTRO / $WFS_DESKTOP** |
 | Image | $WFS_IMAGE |
-| Private browser URL | **$WFS_LINUX_URL** |
-| Tailscale IP | $WFS_LINUX_IP |
-| Transport | $WFS_ACTIVE_TRANSPORT |
-| Username | **wfs** |
-| Password | Secret LINUX_DESKTOP_PASSWORD (never printed) |
-| Scaling | Automatic (Selkies resize) |
+| Remote choice | **$WFS_REMOTE** |
+| **Native RDP address (mstsc)** | ${WFS_RDP_ADDRESS:-Not enabled} |
+| RDP username | **wfsrdp** |
+| RDP password | GitHub Secret RDP_PASSWORD |
+| **Browser address (Selkies/noVNC equivalent)** | ${WFS_LINUX_URL:-Not enabled} |
+| Browser username | **wfs** |
+| Browser password | GitHub Secret VNC_PASSWORD |
+| Web transport | ${WFS_ACTIVE_TRANSPORT:-none} |
+| Browser resolution | Automatic Selkies resizing |
 | Optional apps | $WFS_APPS |
-| Selected duration | $WFS_DURATION hour(s), max 360 minutes including setup |
+| Selected duration | $WFS_DURATION hour(s), GitHub job maximum 360 minutes |
 
-Open this URL on a device connected to the same Tailscale tailnet.
+**RDP and browser are separate desktop sessions.**
+Both endpoints are restricted to the Tailscale tailnet.
 EOF
-  if [ "$WFS_ACTIVE_TRANSPORT" = tailnet_tls_tcp ]; then
-    echo "**Certificate warning:** this fallback uses Webtop HTTPS with a self-signed certificate inside encrypted Tailscale TCP 6082. The browser may require manual acceptance once. Enable tailnet HTTPS Certificates and choose tailnet_https to avoid the warning." >> "$GITHUB_STEP_SUMMARY"
+  if [ "${WFS_ACTIVE_TRANSPORT:-none}" = tailnet_tls_tcp ]; then
+    echo 'The browser fallback on TCP 6082 uses a self-signed HTTPS certificate. Use trusted HTTPS 443 to avoid a certificate warning.' >> "$GITHUB_STEP_SUMMARY"
   fi
-  echo "The selected distro runs in a Docker container on the GitHub-hosted Ubuntu 24.04 runner. Closing the browser does not end the session." >> "$GITHUB_STEP_SUMMARY"
+  if [ -f "$state/apps-status.tsv" ]; then
+    {
+      echo
+      echo '### Selected applications'
+      echo '| App | Status |'
+      echo '|:--|:--|'
+      while IFS=$'\t' read -r app result; do
+        printf '| %s | %s |\n' "$app" "$result"
+      done < "$state/apps-status.tsv"
+    } >> "$GITHUB_STEP_SUMMARY"
+  fi
+  echo 'The selected distro runs inside a temporary container on GitHub Ubuntu 24.04. Do not terminate the runner; use Disconnect or Cancel workflow.' >> "$GITHUB_STEP_SUMMARY"
 }
+
 keepalive() {
   validate
   local deadline=$((SECONDS + WFS_DURATION * 3600))

@@ -2583,7 +2583,10 @@ jobs:
           }
 
           Write-Host '[noVNC 5/5] Publishing verified local endpoints and private tailnet URLs.'
-          $preferredUrl = if ($httpsUrl) { $httpsUrl } elseif ($serveTcpUrl) { $serveTcpUrl } else { $directUrl }
+          # TCP Serve is the most reliable browser entrypoint on this runner:
+          # it uses the native Tailscale transport and avoids the Windows
+          # firewall block observed on raw TCP 6080. HTTPS Serve remains optional.
+          $preferredUrl = if ($serveTcpUrl) { $serveTcpUrl } elseif ($httpsUrl) { $httpsUrl } else { $directUrl }
           "NOVNC_URL=$preferredUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           "NOVNC_DIRECT_URL=$directUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           "NOVNC_TCP_SERVE_STATUS=$serveTcpStatus" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
@@ -2605,7 +2608,7 @@ jobs:
           $firewallRule = Get-NetFirewallRule -Name 'WFS-noVNC-Tailscale' -ErrorAction SilentlyContinue
           if ($firewallRule) { Write-Host "✅ noVNC Windows Firewall rule: $($firewallRule.Enabled), $($firewallRule.Direction), $($firewallRule.Action)" }
 
-          Write-Host "🌐 noVNC preferred URL: $preferredUrl"
+          Write-Host "🌐 noVNC preferred URL (open HTTP TCP Serve first): $preferredUrl"
           Write-Host "🌐 noVNC direct fallback (HTTP, within Tailscale only): $directUrl"
           Write-Host "🛡️ noVNC tailnet-native TCP Serve status: $serveTcpStatus"
           if ($serveTcpUrl) { Write-Host "🌐 noVNC tailnet-native TCP URL: $serveTcpUrl" }
@@ -2883,12 +2886,13 @@ jobs:
           if ($remoteMode -in @('novnc','both')) {
             $summaryLines.Add("| noVNC browser access | Value |") | Out-Null
             $summaryLines.Add("|---|---|") | Out-Null
-            $summaryLines.Add("| noVNC preferred URL | [$env:NOVNC_URL]($env:NOVNC_URL) |") | Out-Null
+            $summaryLines.Add("| noVNC preferred URL (try this first) | [$env:NOVNC_URL]($env:NOVNC_URL) |") | Out-Null
+            $summaryLines.Add("| Browser protocol | TCP Serve 6082: HTTP, not HTTPS. HTTPS is available only on the distinct Tailscale Serve HTTPS link. |") | Out-Null
             if ($env:NOVNC_TCP_SERVE_URL) {
               $summaryLines.Add("| noVNC Tailscale TCP Serve (port 6082) | [$env:NOVNC_TCP_SERVE_URL]($env:NOVNC_TCP_SERVE_URL) |") | Out-Null
             }
             $summaryLines.Add("| Tailscale TCP Serve status | $env:NOVNC_TCP_SERVE_STATUS |") | Out-Null
-            $summaryLines.Add("| noVNC direct HTTP fallback (port 6080) | [$env:NOVNC_DIRECT_URL]($env:NOVNC_DIRECT_URL) |") | Out-Null
+            $summaryLines.Add("| noVNC direct HTTP (port 6080; may be blocked by Windows Firewall) | [$env:NOVNC_DIRECT_URL]($env:NOVNC_DIRECT_URL) |") | Out-Null
             if ($env:NOVNC_HTTPS_URL) {
               $summaryLines.Add("| Tailscale Serve HTTPS | [$env:NOVNC_HTTPS_URL]($env:NOVNC_HTTPS_URL) |") | Out-Null
             } else {

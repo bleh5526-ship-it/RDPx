@@ -152,6 +152,15 @@ run-name: "🚀 Windows Workspace • ${{ inputs.remote_access }} • ${{ inputs
           - "random_each_run"
           - "same_from_secret"
 
+      novnc_transport:
+        description: "Satu port untuk noVNC: TCP 6082 atau HTTPS 443 (perlu sertifikat HTTPS Tailscale)"
+        required: true
+        default: "tailscale_tcp"
+        type: choice
+        options:
+          - "tailscale_tcp"
+          - "tailscale_https"
+
 jobs:
   secure-rdp:
     name: 🪟 Windows Remote Workspace (RDP / noVNC)
@@ -2427,194 +2436,90 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'websockify installation failed.' }
           Write-Host '[noVNC 1/5] websockify installed; configuring direct HTTP listener...'
 
-          # Web endpoint listens ONLY on the Tailscale IPv4, with a tailnet-only firewall rule.
-          $rule = 'WFS-noVNC-Tailscale'
-          Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
-          New-NetFirewallRule -Name $rule -DisplayName 'WFS noVNC Tailscale only' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 6080 -LocalAddress $env:TAILSCALE_IP -RemoteAddress '100.64.0.0/10' -Profile Any -ErrorAction Stop | Out-Null
-          Write-Host '[noVNC 2/5] Firewall ready; starting websockify on the Tailscale IPv4.'
-          $logOut = Join-Path $base 'websockify.out.log'
-          $logErr = Join-Path $base 'websockify.err.log'
-          $args = @('-m', 'websockify', '--web', ('"' + $webRoot + '"'), "$($env:TAILSCALE_IP):6080", '127.0.0.1:5900')
-          $proxy = Start-Process -FilePath $python -ArgumentList $args -WindowStyle Hidden -PassThru -RedirectStandardOutput $logOut -RedirectStandardError $logErr
-          $url = "http://$($env:TAILSCALE_IP):6080/vnc.html"
-          $ready = $false
-          for ($i=0; $i -lt 15; $i++) {
-            if ($proxy.HasExited) { break }
+          # Keep both the RFB server (5900) and websockify (6081) on localhost.
+          # Tailscale Serve exposes exactly ONE port to the tailnet per run:
+          # raw TCP 6082 by default OR HTTPS 443 when explicitly selected.
+          $transport = '${{ inputs.novnc_transport }}'
+          $staleRule = Get-NetFirewallRule -Name 'WFS-noVNC-Tailscale' -ErrorAction SilentlyContinue
+          if ($staleRule) { $staleRule | Remove-NetFirewallRule -ErrorAction SilentlyContinue }
+          Write-Host '[noVNC 2/5] Starting one loopback-only websockify backend on 127.0.0.1:6081.'
+
+          $webOut = Join-Path $base 'websockify.out.log'
+          $webErr = Join-Path $base 'websockify.err.log'
+          $webArgs = @('-m','websockify','--web',('"' + $webRoot + '"'),'127.0.0.1:6081','127.0.0.1:5900')
+          $webProc = Start-Process -FilePath $python -ArgumentList $webArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput $webOut -RedirectStandardError $webErr
+          $webReady = $false
+          for ($i=0; $i -lt 12; $i++) {
+            if ($webProc.HasExited) { break }
             try {
-              $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5
-              if ($response.StatusCode -eq 200 -and $response.Content -match 'noVNC') {
-                $ready = $true
-                break
-              }
+              $page = Invoke-WebRequest -Uri 'http://127.0.0.1:6081/vnc.html' -UseBasicParsing -TimeoutSec 3
+              if ($page.StatusCode -eq 200 -and $page.Content -match 'noVNC') { $webReady = $true; break }
             } catch {}
             Start-Sleep -Seconds 2
           }
-          if (-not $ready) {
-            if (Test-Path $logErr) { Get-Content $logErr -Tail 30 | Out-Host }
-            throw 'noVNC HTTP endpoint did not respond on the Tailscale IPv4.'
+          if (-not $webReady) {
+            if (Test-Path $webErr) { Get-Content -LiteralPath $webErr -Tail 25 | Out-Host }
+            throw 'noVNC localhost backend is not healthy on 127.0.0.1:6081.'
           }
-          Write-Host '[noVNC 3/5] Direct web page is healthy; optional HTTPS configuration begins.'
-          $directUrl = $url
-          $httpsUrl = $null
-          # This local-only proxy is a separate backend for Tailscale Serve.
-          # Keep the direct Tailscale IPv4:6080 endpoint as a fallback.
-          $localOut = Join-Path $base 'websockify-serve.out.log'
-          $localErr = Join-Path $base 'websockify-serve.err.log'
-          try {
-            $localArgs = @('-m', 'websockify', '--web', ('"' + $webRoot + '"'), '127.0.0.1:6081', '127.0.0.1:5900')
-            $localProxy = Start-Process -FilePath $python -ArgumentList $localArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput $localOut -RedirectStandardError $localErr
-            $localReady = $false
-            for ($i = 0; $i -lt 15; $i++) {
-              if ($localProxy.HasExited) { break }
-              try {
-                $check = Invoke-WebRequest -Uri 'http://127.0.0.1:6081/vnc.html' -UseBasicParsing -TimeoutSec 5
-                if ($check.StatusCode -eq 200 -and $check.Content -match 'noVNC') {
-                  $localReady = $true
-                  break
-                }
-              } catch {}
-              Start-Sleep -Seconds 2
-            }
+          Write-Host '[noVNC 3/5] Local noVNC HTTP page verified; configuring one private Tailscale port.'
 
-            if (-not $localReady) {
-              Write-Warning 'Local noVNC Serve backend not ready; direct Tailscale IP endpoint remains active.'
-              if (Test-Path $localErr) { Get-Content $localErr -Tail 15 | Out-Host }
-            } else {
-              $tsExe = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
-              if (Test-Path $tsExe) {
-                $tsStatusRaw = & $tsExe status --json
-                if ($LASTEXITCODE -ne 0) { throw 'Tailscale status failed before configuring Serve.' }
-                $tsStatus = ($tsStatusRaw | Out-String | ConvertFrom-Json)
-                $fqdn = ([string]$tsStatus.Self.DNSName).TrimEnd('.')
-                if ($fqdn -notmatch '^[a-z0-9][a-z0-9.-]*\.ts\.net$') {
-                  throw 'Tailscale MagicDNS FQDN is unavailable; leaving HTTPS Serve disabled.'
-                }
-                # Serve is private to the tailnet; never use Funnel (public).
-                # HTTPS certificates/Serve must be enabled in tailnet settings.
-                # A setup consent link may appear in the output if not enabled.
-                # A new tailnet can require interactive consent to enable HTTPS.
-                # Never let the CLI block the entire runner: use --yes and a
-                # hard 15 second timeout, then fall back to the direct HTTP URL.
-                Write-Host '[noVNC 4/5] Trying Tailscale Serve HTTPS with a strict 15s timeout...'
-                $serveStdout = Join-Path $base 'tailscale-serve.out.log'
-                $serveStderr = Join-Path $base 'tailscale-serve.err.log'
-                $serveArgs = @('serve', '--bg', '--yes', '--https=443', 'http://127.0.0.1:6081')
-                $serveProc = Start-Process -FilePath $tsExe -ArgumentList $serveArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput $serveStdout -RedirectStandardError $serveStderr
-                if (-not $serveProc.WaitForExit(15000)) {
-                  try { $serveProc.Kill($true) } catch { Stop-Process -Id $serveProc.Id -Force -ErrorAction SilentlyContinue }
-                  Write-Warning 'Tailscale Serve needs consent or timed out. HTTP direct access remains enabled.'
-                } elseif ($serveProc.ExitCode -ne 0) {
-                  Write-Warning "Tailscale Serve returned code $($serveProc.ExitCode); HTTPS skipped. Enable HTTPS certificates/Serve in your tailnet."
-                } else {
-                  $serveStatusOut = Join-Path $base 'tailscale-serve-status.out.log'
-                  $serveStatusErr = Join-Path $base 'tailscale-serve-status.err.log'
-                  $statusProc = Start-Process -FilePath $tsExe -ArgumentList @('serve','status') -WindowStyle Hidden -PassThru -RedirectStandardOutput $serveStatusOut -RedirectStandardError $serveStatusErr
-                  if (-not $statusProc.WaitForExit(10000)) {
-                    try { $statusProc.Kill($true) } catch { Stop-Process -Id $statusProc.Id -Force -ErrorAction SilentlyContinue }
-                    Write-Warning 'Tailscale Serve status timed out; HTTPS URL is not advertised.'
-                  } elseif ($statusProc.ExitCode -eq 0) {
-                    $statusText = Get-Content -LiteralPath $serveStatusOut -Raw -ErrorAction SilentlyContinue
-                    if ($statusText -match '127\.0\.0\.1:6081' -and $statusText -match 'https://') {
-                      $httpsUrl = "https://$fqdn/vnc.html"
-                      Write-Host "Tailscale Serve HTTPS active: $httpsUrl"
-                    } else {
-                      Write-Warning 'Tailscale Serve status did not confirm the HTTPS target; HTTP fallback remains primary.'
-                    }
-                  } else {
-                    Write-Warning 'Tailscale Serve status command failed; using HTTP fallback.'
-                  }
-                }
-              }
+          $tsExe = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+          if (-not (Test-Path $tsExe)) { throw 'Tailscale CLI missing on runner.' }
+          function Invoke-TailscaleBounded {
+            param([string[]]$Arguments,[string]$Tag,[int]$Seconds = 15)
+            $outFile = Join-Path $base "$Tag.stdout.log"
+            $errFile = Join-Path $base "$Tag.stderr.log"
+            $proc = Start-Process -FilePath $tsExe -ArgumentList $Arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            if (-not $proc.WaitForExit($Seconds * 1000)) {
+              try { $proc.Kill($true) } catch { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+              throw "Tailscale command $Tag timed out after $Seconds seconds. Check Serve permissions and HTTPS setup."
             }
-          } catch {
-            Write-Warning "Optional Tailscale Serve setup skipped: $($_.Exception.Message)"
+            $outText = if (Test-Path $outFile) { [string](Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue) } else { '' }
+            $errText = if (Test-Path $errFile) { [string](Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue) } else { '' }
+            if ($proc.ExitCode -ne 0) {
+              throw "Tailscale command $Tag failed with exit code $($proc.ExitCode): $errText $outText"
+            }
+            return $outText
           }
 
-          # Prefer a tailnet-native TCP proxy when available. Unlike raw
-          # Windows port 6080, this proxy is handled by Tailscale itself,
-          # requires no public listener and does not require HTTPS certificates.
-          $serveTcpUrl = $null
-          $serveTcpStatus = 'not attempted'
-          if ($localReady -and (Test-Path $tsExe)) {
-            Write-Host '[noVNC 4b/5] Configuring private Tailscale TCP forwarding on port 6082...'
-            try {
-              $tcpOut = Join-Path $base 'tailscale-tcp-serve.out.log'
-              $tcpErr = Join-Path $base 'tailscale-tcp-serve.err.log'
-              $tcpProcess = Start-Process -FilePath $tsExe -ArgumentList @('serve','--bg','--yes','--tcp=6082','tcp://127.0.0.1:6081') -WindowStyle Hidden -PassThru -RedirectStandardOutput $tcpOut -RedirectStandardError $tcpErr
-              if (-not $tcpProcess.WaitForExit(15000)) {
-                try { $tcpProcess.Kill($true) } catch { Stop-Process -Id $tcpProcess.Id -Force -ErrorAction SilentlyContinue }
-                $serveTcpStatus = 'timeout'
-                Write-Warning 'Tailscale TCP Serve timed out after 15 seconds; direct noVNC remains available.'
-              } elseif ($tcpProcess.ExitCode -ne 0) {
-                $serveTcpStatus = "exit code $($tcpProcess.ExitCode)"
-                Write-Warning "Tailscale TCP Serve failed: $serveTcpStatus"
-                if (Test-Path $tcpErr) { Get-Content -LiteralPath $tcpErr -Tail 10 | Out-Host }
-              } else {
-                $tcpStatusOut = Join-Path $base 'tailscale-tcp-status.out.log'
-                $tcpStatusErr = Join-Path $base 'tailscale-tcp-status.err.log'
-                $tcpStatusProcess = Start-Process -FilePath $tsExe -ArgumentList @('serve','status') -WindowStyle Hidden -PassThru -RedirectStandardOutput $tcpStatusOut -RedirectStandardError $tcpStatusErr
-                if (-not $tcpStatusProcess.WaitForExit(10000)) {
-                  try { $tcpStatusProcess.Kill($true) } catch { Stop-Process -Id $tcpStatusProcess.Id -Force -ErrorAction SilentlyContinue }
-                  $serveTcpStatus = 'status timed out'
-                  Write-Warning 'Tailscale TCP forwarding configured but status verification timed out.'
-                } elseif ($tcpStatusProcess.ExitCode -eq 0) {
-                  $tcpStatusText = Get-Content -LiteralPath $tcpStatusOut -Raw -ErrorAction SilentlyContinue
-                  if ($tcpStatusText -match '6082' -and $tcpStatusText -match '127\.0\.0\.1:6081') {
-                    $serveTcpUrl = "http://$($env:TAILSCALE_IP):6082/vnc.html"
-                    $serveTcpStatus = 'configured (remote peer access not yet verified)'
-                    Write-Host "✅ Tailscale TCP Serve ready: $serveTcpUrl"
-                  } else {
-                    $serveTcpStatus = 'status mapping not confirmed'
-                    Write-Warning 'TCP Serve status did not contain the expected 6082 -> 127.0.0.1:6081 mapping.'
-                    Write-Host ([string]$tcpStatusText)
-                  }
-                } else {
-                  $serveTcpStatus = "status exit code $($tcpStatusProcess.ExitCode)"
-                  Write-Warning "TCP Serve status could not be verified: $serveTcpStatus"
-                }
-              }
-            } catch {
-              $serveTcpStatus = 'setup failed'
-              Write-Warning "Optional Tailscale TCP forwarding unavailable: $($_.Exception.Message)"
+          $url = $null
+          $serveState = $null
+          if ($transport -eq 'tailscale_tcp') {
+            Write-Host '[noVNC 4/5] Configuring tailnet-only TCP Serve on port 6082 (no Windows inbound firewall rule).'
+            $serveText = Invoke-TailscaleBounded -Arguments @('serve','--bg','--yes','--tcp=6082','tcp://127.0.0.1:6081') -Tag 'serve-tcp' -Seconds 15
+            $serveState = Invoke-TailscaleBounded -Arguments @('serve','status') -Tag 'serve-status' -Seconds 10
+            if ($serveState -notmatch '6082' -or $serveState -notmatch '6081') {
+              throw 'Tailscale TCP Serve did not confirm the 6082 to 127.0.0.1:6081 mapping.'
             }
+            $url = "http://$($env:TAILSCALE_IP):6082/vnc.html"
+            "NOVNC_TCP_SERVE_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          } elseif ($transport -eq 'tailscale_https') {
+            Write-Host '[noVNC 4/5] Configuring HTTPS Serve on 443; tailnet HTTPS certificates must already be enabled.'
+            $statusRaw = Invoke-TailscaleBounded -Arguments @('status','--json') -Tag 'tailscale-status' -Seconds 10
+            $tsStatus = $statusRaw | ConvertFrom-Json -ErrorAction Stop
+            $fqdn = ([string]$tsStatus.Self.DNSName).TrimEnd('.')
+            if ($fqdn -notmatch '^[a-z0-9][a-z0-9.-]*\.ts\.net$') {
+              throw 'Tailscale HTTPS requires a valid *.ts.net MagicDNS hostname.'
+            }
+            $serveText = Invoke-TailscaleBounded -Arguments @('serve','--bg','--yes','--https=443','http://127.0.0.1:6081') -Tag 'serve-https' -Seconds 15
+            $serveState = Invoke-TailscaleBounded -Arguments @('serve','status') -Tag 'serve-status' -Seconds 10
+            if ($serveState -notmatch 'https://' -or $serveState -notmatch '6081') {
+              throw 'Tailscale HTTPS Serve did not confirm the HTTPS to 127.0.0.1:6081 mapping.'
+            }
+            $url = "https://$fqdn/vnc.html"
+            "NOVNC_HTTPS_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           } else {
-            $serveTcpStatus = 'local websockify/Tailscale prerequisites missing'
-            Write-Warning 'Tailscale TCP forwarding skipped because localhost backend or Tailscale is unavailable.'
+            throw "Invalid novnc_transport: $transport"
           }
 
-          Write-Host '[noVNC 5/5] Publishing verified local endpoints and private tailnet URLs.'
-          # TCP Serve is the most reliable browser entrypoint on this runner:
-          # it uses the native Tailscale transport and avoids the Windows
-          # firewall block observed on raw TCP 6080. HTTPS Serve remains optional.
-          $preferredUrl = if ($serveTcpUrl) { $serveTcpUrl } elseif ($httpsUrl) { $httpsUrl } else { $directUrl }
-          "NOVNC_URL=$preferredUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          "NOVNC_DIRECT_URL=$directUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          "NOVNC_TCP_SERVE_STATUS=$serveTcpStatus" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          if ($serveTcpUrl) {
-            "NOVNC_TCP_SERVE_URL=$serveTcpUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          }
-          if ($httpsUrl) {
-            "NOVNC_HTTPS_URL=$httpsUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          }
+          "NOVNC_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          "NOVNC_TRANSPORT=$transport" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          Write-Host '[noVNC 5/5] Private browser endpoint configured.'
+          Write-Host "✅ noVNC browser URL: $url"
+          Write-Host 'VNC RFB listens locally at 127.0.0.1:5900; web backend locally at 127.0.0.1:6081.'
+          Write-Host 'Only the selected Tailscale Serve port is exposed (6082 TCP OR 443 HTTPS).'
+          Write-Host 'Remote browser reachability must still be confirmed from a separate tailnet device.'
 
-          # Bind check is local only. Clients must still be permitted by tailnet
-          # ACLs/grants and Windows Firewall, and Tailscale must be connected.
-          $listener = Get-NetTCPConnection -LocalAddress $env:TAILSCALE_IP -LocalPort 6080 -State Listen -ErrorAction SilentlyContinue
-          if ($listener) {
-            Write-Host "✅ noVNC IPv4 port 6080 LISTENING on Tailscale interface."
-          } else {
-            Write-Warning 'Could not verify TCP 6080 LISTEN on Tailscale interface.'
-          }
-          $firewallRule = Get-NetFirewallRule -Name 'WFS-noVNC-Tailscale' -ErrorAction SilentlyContinue
-          if ($firewallRule) { Write-Host "✅ noVNC Windows Firewall rule: $($firewallRule.Enabled), $($firewallRule.Direction), $($firewallRule.Action)" }
-
-          Write-Host "🌐 noVNC preferred URL (open HTTP TCP Serve first): $preferredUrl"
-          Write-Host "🌐 noVNC direct fallback (HTTP, within Tailscale only): $directUrl"
-          Write-Host "🛡️ noVNC tailnet-native TCP Serve status: $serveTcpStatus"
-          if ($serveTcpUrl) { Write-Host "🌐 noVNC tailnet-native TCP URL: $serveTcpUrl" }
-          if (-not $httpsUrl) {
-            Write-Warning 'HTTPS URL not available. Try the HTTP direct URL (not https://), and check Tailscale device ACLs/grants if it times out.'
-          }
           if ($passwordMode -eq 'same_from_secret') {
             Write-Host 'Use the VNC_PASSWORD repository secret in your browser (VNCAuth uses first 8 bytes).'
           } else {
@@ -2887,17 +2792,10 @@ jobs:
             $summaryLines.Add("| noVNC browser access | Value |") | Out-Null
             $summaryLines.Add("|---|---|") | Out-Null
             $summaryLines.Add("| noVNC preferred URL (try this first) | [$env:NOVNC_URL]($env:NOVNC_URL) |") | Out-Null
-            $summaryLines.Add("| Browser protocol | TCP Serve 6082: HTTP, not HTTPS. HTTPS is available only on the distinct Tailscale Serve HTTPS link. |") | Out-Null
-            if ($env:NOVNC_TCP_SERVE_URL) {
-              $summaryLines.Add("| noVNC Tailscale TCP Serve (port 6082) | [$env:NOVNC_TCP_SERVE_URL]($env:NOVNC_TCP_SERVE_URL) |") | Out-Null
-            }
-            $summaryLines.Add("| Tailscale TCP Serve status | $env:NOVNC_TCP_SERVE_STATUS |") | Out-Null
-            $summaryLines.Add("| noVNC direct HTTP (port 6080; may be blocked by Windows Firewall) | [$env:NOVNC_DIRECT_URL]($env:NOVNC_DIRECT_URL) |") | Out-Null
-            if ($env:NOVNC_HTTPS_URL) {
-              $summaryLines.Add("| Tailscale Serve HTTPS | [$env:NOVNC_HTTPS_URL]($env:NOVNC_HTTPS_URL) |") | Out-Null
-            } else {
-              $summaryLines.Add("| Tailscale Serve HTTPS | Not configured; enable HTTPS certificates/Serve in Tailscale tailnet settings if desired |") | Out-Null
-            }
+            $summaryLines.Add("| Selected transport | $env:NOVNC_TRANSPORT |") | Out-Null
+            $summaryLines.Add("| Externally reachable ports | TCP Serve: 6082 OR HTTPS Serve: 443; never both for the same run |") | Out-Null
+            $summaryLines.Add("| Local-only ports (not published) | TightVNC 5900; websockify 6081 |") | Out-Null
+            $summaryLines.Add("| Verification | Local backend and Serve mapping checked; remote browser access still needs testing |") | Out-Null
             $vncLoginHelp = if ($vncPasswordMode -eq 'random_each_run') { 'Generated password in the noVNC installation step log (public repo logs are public)' } else { 'GitHub Secret VNC_PASSWORD (first 8 bytes effective)' }
             $summaryLines.Add("| noVNC password mode | $vncPasswordMode |") | Out-Null
             $summaryLines.Add("| Browser VNC password | $vncLoginHelp |") | Out-Null
@@ -2958,9 +2856,9 @@ jobs:
           $summaryLines.Add("| RDP timeout | Pastikan device lokal sudah connect ke Tailscale dan berada di tailnet yang sama |") | Out-Null
           $summaryLines.Add("| MagicDNS belum resolve | Tunggu sebentar atau langsung pakai IP Tailscale |") | Out-Null
           if ($remoteMode -in @('novnc','both')) {
-            $summaryLines.Add("| noVNC tidak terbuka | Coba TCP Serve port 6082 jika ada, HTTPS Serve jika tersedia, atau direct HTTP port 6080. Jangan ganti http menjadi https pada port 6082/6080 |") | Out-Null
-            $summaryLines.Add("| Semua URL noVNC timeout | Periksa Tailscale ACL/grants untuk TCP port 6082/6080, target IP dari run yang aktif, dan status node online di Tailscale admin |") | Out-Null
-            $summaryLines.Add("| Tailnet sama tetapi timeout | Dari komputer Anda jalankan tailscale ping ke hostname, lalu Test-NetConnection ke IP Tailscale port 6080; periksa ACL/grants tailnet |") | Out-Null
+            $summaryLines.Add("| noVNC URL tidak terbuka | Pilih tailscale_tcp (HTTP port 6082) atau tailscale_https (HTTPS *.ts.net port 443) pada run baru; jangan mengubah protokol URL |") | Out-Null
+            $summaryLines.Add("| noVNC timeout | Periksa tailnet ACL/grants untuk port yang dipilih, IP runner di run aktif, dan node online di Tailscale admin |") | Out-Null
+            $summaryLines.Add("| Tailnet sama tetapi timeout | Dari PC jalankan tailscale ping dan Test-NetConnection ke port 6082 (mode TCP) atau 443 (mode HTTPS) |") | Out-Null
             $summaryLines.Add("| Server noVNC tidak tersedia | Pastikan run GitHub Actions masih aktif. Setelah runner berakhir, layanan dan IP sesi tidak dapat digunakan |") | Out-Null
             $summaryLines.Add("| noVNC password ditolak | Untuk mode tetap gunakan VNC_PASSWORD, untuk acak lihat log step noVNC. VNCAuth memakai 8 byte pertama. |") | Out-Null
           }
@@ -3016,8 +2914,7 @@ jobs:
           }
           if ($remoteMode -in @('novnc','both')) {
             Write-Host "║  noVNC    : $env:NOVNC_URL"
-            Write-Host "║  Direct   : $env:NOVNC_DIRECT_URL"
-            if ($env:NOVNC_TCP_SERVE_URL) { Write-Host "║  TCP Serve: $env:NOVNC_TCP_SERVE_URL" }
+            Write-Host "║  Protocol : $env:NOVNC_TRANSPORT"
             $vncHint = if ($vncPasswordMode -eq 'same_from_secret') { 'secret VNC_PASSWORD' } else { 'generated; see noVNC step log' }
             Write-Host "║  VNC pass : $vncHint"
           }

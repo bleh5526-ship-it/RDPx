@@ -2450,8 +2450,86 @@ jobs:
             if (Test-Path $logErr) { Get-Content $logErr -Tail 30 | Out-Host }
             throw 'noVNC HTTP endpoint did not respond on the Tailscale IPv4.'
           }
-          "NOVNC_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          Write-Host "✅ noVNC web access: $url"
+          $directUrl = $url
+          $httpsUrl = $null
+          # This local-only proxy is a separate backend for Tailscale Serve.
+          # Keep the direct Tailscale IPv4:6080 endpoint as a fallback.
+          $localOut = Join-Path $base 'websockify-serve.out.log'
+          $localErr = Join-Path $base 'websockify-serve.err.log'
+          try {
+            $localArgs = @('-m', 'websockify', '--web', ('"' + $webRoot + '"'), '127.0.0.1:6081', '127.0.0.1:5900')
+            $localProxy = Start-Process -FilePath $python -ArgumentList $localArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput $localOut -RedirectStandardError $localErr
+            $localReady = $false
+            for ($i = 0; $i -lt 15; $i++) {
+              if ($localProxy.HasExited) { break }
+              try {
+                $check = Invoke-WebRequest -Uri 'http://127.0.0.1:6081/vnc.html' -UseBasicParsing -TimeoutSec 5
+                if ($check.StatusCode -eq 200 -and $check.Content -match 'noVNC') {
+                  $localReady = $true
+                  break
+                }
+              } catch {}
+              Start-Sleep -Seconds 2
+            }
+
+            if (-not $localReady) {
+              Write-Warning 'Local noVNC Serve backend not ready; direct Tailscale IP endpoint remains active.'
+              if (Test-Path $localErr) { Get-Content $localErr -Tail 15 | Out-Host }
+            } else {
+              $tsExe = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+              if (Test-Path $tsExe) {
+                $tsStatusRaw = & $tsExe status --json
+                if ($LASTEXITCODE -ne 0) { throw 'Tailscale status failed before configuring Serve.' }
+                $tsStatus = ($tsStatusRaw | Out-String | ConvertFrom-Json)
+                $fqdn = ([string]$tsStatus.Self.DNSName).TrimEnd('.')
+                if ($fqdn -notmatch '^[a-z0-9][a-z0-9.-]*\.ts\.net$') {
+                  throw 'Tailscale MagicDNS FQDN is unavailable; leaving HTTPS Serve disabled.'
+                }
+                # Serve is private to the tailnet; never use Funnel (public).
+                # HTTPS certificates/Serve must be enabled in tailnet settings.
+                # A setup consent link may appear in the output if not enabled.
+                $serveOutput = & $tsExe serve --bg --https=443 http://127.0.0.1:6081 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                  Write-Warning 'Tailscale Serve HTTPS not enabled or not authorized in this tailnet. Open the consent/setup URL in the Tailscale output, then run a new workflow.'
+                  $serveOutput | ForEach-Object { Write-Host ([string]$_) }
+                } else {
+                  $serveStatus = & $tsExe serve status 2>&1
+                  if ($LASTEXITCODE -eq 0) {
+                    $httpsUrl = "https://$fqdn/vnc.html"
+                    Write-Host "✅ Tailscale Serve HTTPS configured: $httpsUrl"
+                  } else {
+                    Write-Warning 'Tailscale Serve command ran, but status verification failed. Using direct IP fallback.'
+                  }
+                }
+              }
+            }
+          } catch {
+            Write-Warning "Optional Tailscale Serve setup skipped: $($_.Exception.Message)"
+          }
+
+          $preferredUrl = if ($httpsUrl) { $httpsUrl } else { $directUrl }
+          "NOVNC_URL=$preferredUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          "NOVNC_DIRECT_URL=$directUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          if ($httpsUrl) {
+            "NOVNC_HTTPS_URL=$httpsUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          }
+
+          # Bind check is local only. Clients must still be permitted by tailnet
+          # ACLs/grants and Windows Firewall, and Tailscale must be connected.
+          $listener = Get-NetTCPConnection -LocalAddress $env:TAILSCALE_IP -LocalPort 6080 -State Listen -ErrorAction SilentlyContinue
+          if ($listener) {
+            Write-Host "✅ noVNC IPv4 port 6080 LISTENING on Tailscale interface."
+          } else {
+            Write-Warning 'Could not verify TCP 6080 LISTEN on Tailscale interface.'
+          }
+          $firewallRule = Get-NetFirewallRule -Name 'WFS-noVNC-Tailscale' -ErrorAction SilentlyContinue
+          if ($firewallRule) { Write-Host "✅ noVNC Windows Firewall rule: $($firewallRule.Enabled), $($firewallRule.Direction), $($firewallRule.Action)" }
+
+          Write-Host "🌐 noVNC preferred URL: $preferredUrl"
+          Write-Host "🌐 noVNC direct fallback (HTTP, within Tailscale only): $directUrl"
+          if (-not $httpsUrl) {
+            Write-Warning 'HTTPS URL not available. Try the HTTP direct URL (not https://), and check Tailscale device ACLs/grants if it times out.'
+          }
           if ($passwordMode -eq 'same_from_secret') {
             Write-Host 'Use the VNC_PASSWORD repository secret in your browser (VNCAuth uses first 8 bytes).'
           } else {
@@ -2723,7 +2801,13 @@ jobs:
           if ($remoteMode -in @('novnc','both')) {
             $summaryLines.Add("| noVNC browser access | Value |") | Out-Null
             $summaryLines.Add("|---|---|") | Out-Null
-            $summaryLines.Add("| Web URL (Tailscale network) | [$env:NOVNC_URL]($env:NOVNC_URL) |") | Out-Null
+            $summaryLines.Add("| noVNC preferred URL | [$env:NOVNC_URL]($env:NOVNC_URL) |") | Out-Null
+            $summaryLines.Add("| noVNC direct HTTP fallback | [$env:NOVNC_DIRECT_URL]($env:NOVNC_DIRECT_URL) |") | Out-Null
+            if ($env:NOVNC_HTTPS_URL) {
+              $summaryLines.Add("| Tailscale Serve HTTPS | [$env:NOVNC_HTTPS_URL]($env:NOVNC_HTTPS_URL) |") | Out-Null
+            } else {
+              $summaryLines.Add("| Tailscale Serve HTTPS | Not configured; enable HTTPS certificates/Serve in Tailscale tailnet settings if desired |") | Out-Null
+            }
             $vncLoginHelp = if ($vncPasswordMode -eq 'random_each_run') { 'Generated password in the noVNC installation step log (public repo logs are public)' } else { 'GitHub Secret VNC_PASSWORD (first 8 bytes effective)' }
             $summaryLines.Add("| noVNC password mode | $vncPasswordMode |") | Out-Null
             $summaryLines.Add("| Browser VNC password | $vncLoginHelp |") | Out-Null
@@ -2784,7 +2868,9 @@ jobs:
           $summaryLines.Add("| RDP timeout | Pastikan device lokal sudah connect ke Tailscale dan berada di tailnet yang sama |") | Out-Null
           $summaryLines.Add("| MagicDNS belum resolve | Tunggu sebentar atau langsung pakai IP Tailscale |") | Out-Null
           if ($remoteMode -in @('novnc','both')) {
-            $summaryLines.Add("| noVNC tidak terbuka | Periksa Tailscale client, firewall port 6080 dan log ProgramData/RDP-Setup/noVNC |") | Out-Null
+            $summaryLines.Add("| noVNC tidak terbuka | Coba URL HTTPS Serve jika ada, atau HTTP (bukan HTTPS) pada IP Tailscale port 6080 |") | Out-Null
+            $summaryLines.Add("| Tailnet sama tetapi timeout | Dari komputer Anda jalankan tailscale ping ke hostname, lalu Test-NetConnection ke IP Tailscale port 6080; periksa ACL/grants tailnet |") | Out-Null
+            $summaryLines.Add("| Server noVNC tidak tersedia | Pastikan run GitHub Actions masih aktif. Setelah runner berakhir, layanan dan IP sesi tidak dapat digunakan |") | Out-Null
             $summaryLines.Add("| noVNC password ditolak | Untuk mode tetap gunakan VNC_PASSWORD, untuk acak lihat log step noVNC. VNCAuth memakai 8 byte pertama. |") | Out-Null
           }
           $summaryLines.Add("") | Out-Null
@@ -2839,6 +2925,7 @@ jobs:
           }
           if ($remoteMode -in @('novnc','both')) {
             Write-Host "║  noVNC    : $env:NOVNC_URL"
+            Write-Host "║  Direct   : $env:NOVNC_DIRECT_URL"
             $vncHint = if ($vncPasswordMode -eq 'same_from_secret') { 'secret VNC_PASSWORD' } else { 'generated; see noVNC step log' }
             Write-Host "║  VNC pass : $vncHint"
           }

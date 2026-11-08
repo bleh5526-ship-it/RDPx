@@ -138,7 +138,7 @@ noVNC mengakses **sesi console Windows**, yang dapat berbeda dari desktop user p
 
 Workflow terbaru mencoba menggunakan **wallpaper bawaan Windows** jika wallpaper belum disetel dan tidak lagi memaksakan opsi visual "best performance". Ini *best effort*: wallpaper mungkin tetap gelap jika console yang dilihat berbeda dari profil Windows yang diubah. Jika ingin mengganti secara manual, di desktop remote pilih **klik kanan → Personalize → Background → Picture**.
 
-**Skala tampilan otomatis:** noVNC tetap menggunakan `resize=scale`, dan workflow baru mencoba resolusi 16:9 (`1920×1080`, `1600×900`, `1366×768`, atau `1280×720`) hanya jika didukung driver Windows. Jika tidak didukung, resolusi asli dipertahankan; ruang kosong di tepi masih dapat muncul karena perbedaan rasio. Browser tetap memerlukan klik atau F11 untuk fullscreen.
+**Skala tampilan otomatis:** noVNC menggunakan `resize=scale` agar gambar desktop mengikuti ukuran browser. Run terbaru memperbaiki logika resolusi Windows: karena proses Actions tidak memiliki display aktif, workflow **membuat Scheduled Task yang mencoba pengaturan 16:9 setelah login interaktif Windows** (`1920×1080`, `1600×900`, `1366×768`, atau `1280×720` yang tersedia). Jika sudah ada pengguna console aktif, task juga dicoba segera. Hasil perubahan aktual dicatat di `C:\ProgramData\RDP-Setup\wfs-display-resolution.log`. **Ini bukan jaminan driver virtual runner mendukung resolusi tersebut**; jika gagal, resolusi asli tetap digunakan dan menu Windows Display Settings masih dapat dipakai manual. Fullscreen browser tetap memerlukan klik atau F11.
 
 **Layar penuh:** noVNC tidak dapat otomatis mengambil kontrol fullscreen browser tanpa interaksi pengguna. Gunakan **F11** di browser atau ikon **Full screen** pada toolbar noVNC. Untuk mengubah pengaturan secara manual: **noVNC → Settings → Scaling mode → Local scaling**.
 
@@ -223,7 +223,11 @@ Untuk meninggalkan desktop, gunakan **Disconnect** pada noVNC atau tutup tab bro
 
 ## 📦 Aplikasi opsional
 
-Form workflow menyediakan pilihan IDE (VS Code/Antigravity), editor video (CapCut/Shotcut), MetaTrader 4/5, AI API router (9Router/OmniRoute), coding agent (Codex CLI/Claude Code), AI agent (Hermes/OpenClaw/OpenCode), dan **ArtCraft Launcher**. Ketersediaan setiap aplikasi bergantung pada image Windows, installer, dan hasil langkah instalasi. Periksa tabel **App Status** pada Actions Summary; jangan menganggap semua aplikasi berhasil hanya karena workflow mencapai tahap Remote READY.
+Form workflow menyediakan pilihan IDE (VS Code/Antigravity), editor video (CapCut/Shotcut), MetaTrader 4/5, AI API router (9Router/OmniRoute), coding agent (Codex CLI/Claude Code), AI agent (Hermes/OpenClaw/OpenCode), dan **ArtCraft Launcher**.
+
+**ArtCraft Launcher terbaru:** workflow tidak lagi menginstal versi lama `v0.3.2`. Saat `install_artcraft=true`, installer membaca [rilis stabil terbaru dari `storytold/craft-launcher`](https://github.com/storytold/craft-launcher/releases/latest), mencari MSI Windows x64 resmi, mengunduhnya, lalu **memverifikasi SHA-256 terhadap digest aset GitHub** sebelum memasang untuk pengguna `RDP`. Versi yang didapat dicatat pada kolom **App Status** di Actions Summary. Rilis terbaru yang tersedia saat pembaruan panduan ini adalah **v0.16.1 (8 November 2026)**; run berikutnya bisa memakai versi yang lebih baru jika sudah diterbitkan. Jika API/rilis tidak dapat diverifikasi, instalasi akan gagal daripada memakai installer yang tidak tepercaya.
+
+Ketersediaan setiap aplikasi bergantung pada image Windows, installer, dan hasil langkah instalasi. Periksa tabel **App Status** pada Actions Summary; jangan menganggap semua aplikasi berhasil hanya karena workflow mencapai tahap Remote READY.
 
 ## 🔒 Keamanan dan batasan
 

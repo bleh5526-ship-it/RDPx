@@ -797,7 +797,7 @@ jobs:
                   $exe = Join-Path $env:LOCALAPPDATA 'Programs\ArtCraft Launcher\artcraft-launcher.exe'
                   if (-not (Test-Path $exe)) {
                     $log = Join-Path $PSScriptRoot 'msi.log'
-                    $args = @('/i', "`"$($ctx.Installer)`"", '/qn', '/norestart', 'INSTALLDESKTOPSHORTCUT=1', '/L*v', "`"$log`"")
+                    $args = @('/i', "`"$($ctx.Installer)`"", '/qn', '/norestart', 'INSTALLDESKTOPSHORTCUT=0', '/L*v', "`"$log`"")
                     $p = Start-Process "$env:SystemRoot\System32\msiexec.exe" -ArgumentList $args -PassThru -Wait
                     if ($p.ExitCode -notin @(0,3010,1641)) {
                       if (Test-Path $log) { Get-Content $log -Tail 40 | Out-Host }
@@ -1752,17 +1752,12 @@ jobs:
 
           $publicDesktop = Join-Path $env:PUBLIC "Desktop"
           $commonStartMenu = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs"
+
+          # Explorer merges Public and per-user Desktop/Start Menu automatically.
+          # Publish to one shared location per surface to avoid duplicate icons.
           $shortcutDirectories = @($publicDesktop, $commonStartMenu)
-
           $rdpProfile = Join-Path "C:\Users" $env:RDP_USER
-          if (Test-Path $rdpProfile) {
-            $shortcutDirectories += Join-Path $rdpProfile "Desktop"
-            $shortcutDirectories += Join-Path $rdpProfile "AppData\Roaming\Microsoft\Windows\Start Menu\Programs"
-          }
-
-          $shortcutDirectories = $shortcutDirectories |
-            Where-Object { $_ -and $_.Trim() } |
-            Select-Object -Unique
+          $rdpDesktop = Join-Path $rdpProfile "Desktop"
 
           foreach ($dir in $shortcutDirectories) {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -1824,7 +1819,30 @@ jobs:
 
             $shell = New-Object -ComObject WScript.Shell
 
+            # Installers may already have placed a shortcut on either Desktop.
+            # Reuse it if the target and arguments match, even when its name differs.
+            $desktopAlreadyHasApp = $false
+            foreach ($desktopDir in @($rdpDesktop, $publicDesktop)) {
+              if (-not (Test-Path -LiteralPath $desktopDir)) { continue }
+
+              foreach ($existingFile in (Get-ChildItem -LiteralPath $desktopDir -Filter '*.lnk' -File -ErrorAction SilentlyContinue)) {
+                try {
+                  $existing = $shell.CreateShortcut($existingFile.FullName)
+                  if ([string]::Equals($existing.TargetPath, $TargetPath, [StringComparison]::OrdinalIgnoreCase) -and
+                      [string]::Equals($existing.Arguments, $Arguments, [StringComparison]::Ordinal)) {
+                    $desktopAlreadyHasApp = $true
+                    Write-Host "⏭️ Reusing existing Desktop shortcut for $Name : $($existingFile.FullName)"
+                    break
+                  }
+                } catch {
+                  Write-Warning "⚠️ Could not inspect Desktop shortcut $($existingFile.FullName): $($_.Exception.Message)"
+                }
+              }
+              if ($desktopAlreadyHasApp) { break }
+            }
+
             foreach ($dir in $shortcutDirectories) {
+              if ($dir -eq $publicDesktop -and $desktopAlreadyHasApp) { continue }
               $shortcutPath = Join-Path $dir "$Name.lnk"
               $shortcut = $shell.CreateShortcut($shortcutPath)
               $shortcut.TargetPath = $TargetPath

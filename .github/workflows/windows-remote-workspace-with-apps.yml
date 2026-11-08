@@ -2421,6 +2421,7 @@ jobs:
               'SET_ALLOWLOOPBACK=1', 'VALUE_OF_ALLOWLOOPBACK=1',
               'SET_LOOPBACKONLY=1', 'VALUE_OF_LOOPBACKONLY=1',
               'SET_USEVNCAUTHENTICATION=1', 'VALUE_OF_USEVNCAUTHENTICATION=1',
+              'SET_REMOVEWALLPAPER=1', 'VALUE_OF_REMOVEWALLPAPER=0',
               'SET_PASSWORD=1', "VALUE_OF_PASSWORD=$vncPassword",
               'SET_USECONTROLAUTHENTICATION=1', 'VALUE_OF_USECONTROLAUTHENTICATION=1',
               'SET_CONTROLPASSWORD=1', "VALUE_OF_CONTROLPASSWORD=$vncPassword"
@@ -2439,13 +2440,23 @@ jobs:
             Remove-Item -LiteralPath $msi -Force -ErrorAction SilentlyContinue
           }
 
-          $settings = Get-ItemProperty 'HKLM:\SOFTWARE\TightVNC\Server' -ErrorAction Stop
+          $vncRegistry = 'HKLM:\SOFTWARE\TightVNC\Server'
+          $settings = Get-ItemProperty $vncRegistry -ErrorAction Stop
           if ($settings.LoopbackOnly -ne 1 -or $settings.AllowLoopback -ne 1 -or
               $settings.AcceptHttpConnections -ne 0 -or $settings.UseVncAuthentication -ne 1) {
             throw 'VNC loopback-only/password settings verification failed.'
           }
+          # TightVNC defaults RemoveWallpaper=1; disable it to show wallpaper.
+          if ($settings.RemoveWallpaper -ne 0) {
+            Write-Warning "TightVNC RemoveWallpaper was $($settings.RemoveWallpaper); setting 0."
+            Set-ItemProperty -Path $vncRegistry -Name RemoveWallpaper -Value 0 -ErrorAction Stop
+          }
           $svc = Get-Service -Name tvnserver -ErrorAction Stop
           if ($svc.Status -ne 'Running') { Start-Service tvnserver -ErrorAction Stop }
+          else { Restart-Service -Name tvnserver -Force -ErrorAction Stop }
+          $settings = Get-ItemProperty $vncRegistry -ErrorAction Stop
+          if ($settings.RemoveWallpaper -ne 0) { throw 'TightVNC wallpaper suppression still enabled.' }
+          Write-Host 'TightVNC RemoveWallpaper=0 verified; VNC now keeps the Windows wallpaper.'
           $rfbReady = $false
           for ($i=0; $i -lt 15; $i++) {
             if (Test-NetConnection 127.0.0.1 -Port 5900 -InformationLevel Quiet -WarningAction SilentlyContinue) {

@@ -2430,9 +2430,15 @@ jobs:
           Remove-Item -LiteralPath $archive -Force
           if (-not (Test-Path (Join-Path $webRoot 'vnc.html'))) { throw 'noVNC web frontend not found.' }
           $python = (Get-Command python.exe -ErrorAction Stop).Source
-          & $python -m pip install --disable-pip-version-check --no-input 'websockify==0.13.0'
-          if ($LASTEXITCODE -ne 0) { throw 'websockify installation failed.' }
-          Write-Host '[noVNC 1/5] websockify installed; configuring direct HTTP listener...'
+          # The server runs in a Windows Scheduled Task under SYSTEM. Its own
+          # virtual environment avoids runneradmin-only Python site-packages.
+          $venv = Join-Path $base 'pyenv'
+          & $python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot create persistent websockify Python environment.' }
+          $servicePython = Join-Path $venv 'Scripts\python.exe'
+          & $servicePython -m pip install --disable-pip-version-check --no-input 'websockify==0.13.0'
+          if ($LASTEXITCODE -ne 0) { throw 'websockify installation in persistent environment failed.' }
+          Write-Host '[noVNC 1/5] websockify installed in machine-accessible venv; preparing a persistent Scheduled Task...'
 
           # Keep both the RFB server (5900) and websockify (6081) on localhost.
           # Tailscale Serve exposes exactly ONE port to the tailnet per run:
@@ -2444,11 +2450,29 @@ jobs:
 
           $webOut = Join-Path $base 'websockify.out.log'
           $webErr = Join-Path $base 'websockify.err.log'
-          $webArgs = @('-m','websockify','--web',('"' + $webRoot + '"'),'127.0.0.1:6081','127.0.0.1:5900')
-          $webProc = Start-Process -FilePath $python -ArgumentList $webArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput $webOut -RedirectStandardError $webErr
+          $taskName = 'WFS-noVNC-websockify'
+          $launcher = Join-Path $base 'launch-websockify.cmd'
+          @(
+            '@echo off'
+            'cd /d "' + $base + '"'
+            '"' + $servicePython + '" -m websockify --web "' + $webRoot + '" 127.0.0.1:6081 127.0.0.1:5900 1>>"' + $webOut + '" 2>>"' + $webErr + '"'
+          ) | Set-Content -LiteralPath $launcher -Encoding ascii
+          # GitHub Actions terminates child processes spawned by a step when
+          # that step exits. Windows Task Scheduler creates the backend
+          # outside the step process tree and keeps it alive across steps.
+          $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+          if ($existingTask) {
+            Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
+          }
+          $taskAction = New-ScheduledTaskAction -Execute $env:ComSpec -Argument ('/d /c "' + $launcher + '"') -WorkingDirectory $base
+          $taskPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+          $taskSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 7) -MultipleInstances IgnoreNew
+          Register-ScheduledTask -TaskName $taskName -Action $taskAction -Principal $taskPrincipal -Settings $taskSettings -Force -ErrorAction Stop | Out-Null
+          Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
+          Write-Host "Persistent websockify Scheduled Task started: $taskName"
           $webReady = $false
-          for ($i=0; $i -lt 12; $i++) {
-            if ($webProc.HasExited) { break }
+          for ($i=0; $i -lt 15; $i++) {
             try {
               $page = Invoke-WebRequest -Uri 'http://127.0.0.1:6081/vnc.html' -UseBasicParsing -TimeoutSec 3
               if ($page.StatusCode -eq 200 -and $page.Content -match 'noVNC') { $webReady = $true; break }
@@ -2456,8 +2480,12 @@ jobs:
             Start-Sleep -Seconds 2
           }
           if (-not $webReady) {
-            if (Test-Path $webErr) { Get-Content -LiteralPath $webErr -Tail 25 | Out-Host }
-            throw 'noVNC localhost backend is not healthy on 127.0.0.1:6081.'
+            $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            $taskInfo = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction SilentlyContinue
+            Write-Warning "Scheduled Task state: $($task.State); last run result: $($taskInfo.LastTaskResult)"
+            if (Test-Path $webErr) { Get-Content -LiteralPath $webErr -Tail 35 | Out-Host }
+            if (Test-Path $webOut) { Get-Content -LiteralPath $webOut -Tail 20 | Out-Host }
+            throw 'Persistent noVNC websockify task failed the localhost HTTP check.'
           }
           Write-Host '[noVNC 3/5] Local noVNC HTTP page verified; configuring one private Tailscale port.'
 
@@ -2553,9 +2581,21 @@ jobs:
           $localWS = 'ws://127.0.0.1:6081/websockify'
           Write-Host 'Checking local HTTP page, WebSocket bridge and initial VNC/RFB handshake...'
 
-          $page = Invoke-WebRequest -Uri $localPage -UseBasicParsing -TimeoutSec 10
-          if ($page.StatusCode -ne 200 -or $page.Content -notmatch 'noVNC') {
-            throw 'noVNC backend HTTP page failed its health check.'
+          try {
+            $page = Invoke-WebRequest -Uri $localPage -UseBasicParsing -TimeoutSec 10
+            if ($page.StatusCode -ne 200 -or $page.Content -notmatch 'noVNC') {
+              throw 'noVNC backend HTTP page did not return 200/noVNC.'
+            }
+          } catch {
+            $base = Join-Path $env:ProgramData 'RDP-Setup\noVNC'
+            $task = Get-ScheduledTask -TaskName 'WFS-noVNC-websockify' -ErrorAction SilentlyContinue
+            $taskInfo = Get-ScheduledTaskInfo -TaskName 'WFS-noVNC-websockify' -ErrorAction SilentlyContinue
+            Write-Host "Persistent task state: $($task.State); last task result: $($taskInfo.LastTaskResult)"
+            $errLog = Join-Path $base 'websockify.err.log'
+            $outLog = Join-Path $base 'websockify.out.log'
+            if (Test-Path $errLog) { Get-Content -LiteralPath $errLog -Tail 40 | Out-Host }
+            if (Test-Path $outLog) { Get-Content -LiteralPath $outLog -Tail 20 | Out-Host }
+            throw "noVNC localhost backend disappeared between Actions steps: $($_.Exception.Message)"
           }
           Write-Host '✅ Local noVNC HTTP page: 200 OK'
 

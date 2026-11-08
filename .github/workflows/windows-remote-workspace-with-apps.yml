@@ -2566,40 +2566,94 @@ jobs:
             return $outText
           }
 
+          # Serve HTTPS is optional. GitHub-hosted runners are ephemeral and
+          # may need tailnet HTTPS consent or certificate provisioning, so an
+          # HTTPS setup failure must never strand an otherwise healthy noVNC.
+          # Only one Serve listener is left active on each new runner.
+          $requestedTransport = $transport
+          $fallbackReason = ''
           $url = $null
-          $serveState = $null
+          function Start-PrivateTcpServe {
+            Write-Host '[noVNC 4/5] Starting private tailnet TCP Serve on port 6082.'
+            $null = Invoke-TailscaleBounded -Arguments @('serve','--bg','--yes','--tcp=6082','tcp://127.0.0.1:6081') -Tag 'serve-tcp' -Seconds 20
+            $tcpState = Invoke-TailscaleBounded -Arguments @('serve','status') -Tag 'serve-tcp-status' -Seconds 15
+            if ($tcpState -notmatch '6082' -or $tcpState -notmatch '6081') {
+              throw "Tailscale TCP Serve mapping 6082 -> 127.0.0.1:6081 was not confirmed: $tcpState"
+            }
+            if ($tcpState -match 'https://') {
+              throw 'Unexpected HTTPS listener remains active alongside TCP. Refusing to publish two noVNC entrypoints.'
+            }
+            $tcpUrl = "http://$($env:TAILSCALE_IP):6082/vnc.html#resize=scale&autoconnect=1"
+            "NOVNC_TCP_SERVE_URL=$tcpUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+            Write-Host '✅ Private Tailscale TCP Serve mapping verified (no public port or Funnel).'
+            return $tcpUrl
+          }
+
           if ($transport -eq 'tailscale_tcp') {
-            Write-Host '[noVNC 4/5] Configuring tailnet-only TCP Serve on port 6082 (no Windows inbound firewall rule).'
-            $serveText = Invoke-TailscaleBounded -Arguments @('serve','--bg','--yes','--tcp=6082','tcp://127.0.0.1:6081') -Tag 'serve-tcp' -Seconds 15
-            $serveState = Invoke-TailscaleBounded -Arguments @('serve','status') -Tag 'serve-status' -Seconds 10
-            if ($serveState -notmatch '6082' -or $serveState -notmatch '6081') {
-              throw 'Tailscale TCP Serve did not confirm the 6082 to 127.0.0.1:6081 mapping.'
-            }
-            $url = "http://$($env:TAILSCALE_IP):6082/vnc.html#resize=scale&autoconnect=1"
-            "NOVNC_TCP_SERVE_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+            $url = Start-PrivateTcpServe
           } elseif ($transport -eq 'tailscale_https') {
-            Write-Host '[noVNC 4/5] Configuring HTTPS Serve on 443; tailnet HTTPS certificates must already be enabled.'
-            $statusRaw = Invoke-TailscaleBounded -Arguments @('status','--json') -Tag 'tailscale-status' -Seconds 10
-            $tsStatus = $statusRaw | ConvertFrom-Json -ErrorAction Stop
-            $fqdn = ([string]$tsStatus.Self.DNSName).TrimEnd('.')
-            if ($fqdn -notmatch '^[a-z0-9][a-z0-9.-]*\.ts\.net$') {
-              throw 'Tailscale HTTPS requires a valid *.ts.net MagicDNS hostname.'
+            Write-Host '[noVNC 4/5] HTTPS requested; attempting Tailscale Serve with bounded certificate/consent checks.'
+            try {
+              $statusRaw = Invoke-TailscaleBounded -Arguments @('status','--json') -Tag 'tailscale-status' -Seconds 12
+              $tsStatus = $statusRaw | ConvertFrom-Json -ErrorAction Stop
+              $fqdn = ([string]$tsStatus.Self.DNSName).TrimEnd('.')
+              if ($fqdn -notmatch '^[a-z0-9][a-z0-9.-]*\.ts\.net$') {
+                throw 'HTTPS requires a valid MagicDNS *.ts.net hostname.'
+              }
+              # Provisioning certificates on first use may take longer than
+              # the old 15-second watchdog; allow 50s, then fall back.
+              $null = Invoke-TailscaleBounded -Arguments @('serve','--bg','--yes','--https=443','http://127.0.0.1:6081') -Tag 'serve-https' -Seconds 50
+              $httpsState = Invoke-TailscaleBounded -Arguments @('serve','status') -Tag 'serve-https-status' -Seconds 15
+              if ($httpsState -notmatch 'https://' -or $httpsState -notmatch '6081') {
+                throw 'HTTPS Serve mapping was not confirmed.'
+              }
+              $httpsUrl = "https://$fqdn/vnc.html#resize=scale&autoconnect=1"
+              # A configured HTTPS listener may still be waiting for its
+              # first TLS certificate. Do not publish a dead HTTPS URL.
+              $httpsReady = $false
+              for ($try=1; $try -le 3; $try++) {
+                try {
+                  $result = Invoke-WebRequest -Uri ("https://$fqdn/vnc.html") -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+                  if ($result.StatusCode -eq 200 -and $result.Content -match 'noVNC') {
+                    $httpsReady = $true
+                    break
+                  }
+                } catch {
+                  Write-Warning "HTTPS certificate/page probe attempt $try failed: $($_.Exception.Message)"
+                }
+                if ($try -lt 3) { Start-Sleep -Seconds 3 }
+              }
+              if (-not $httpsReady) { throw 'HTTPS Serve configured but its TLS page did not respond after three probes.' }
+              $url = $httpsUrl
+              "NOVNC_HTTPS_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+              Write-Host "✅ HTTPS Serve verified: $url"
+            } catch {
+              $fallbackReason = (($_.Exception.Message -replace '[\r\n|]+',' ').Trim())
+              if ($fallbackReason.Length -gt 250) { $fallbackReason = $fallbackReason.Substring(0,250) }
+              Write-Warning "Requested HTTPS could not start: $fallbackReason"
+              Write-Warning 'Falling back to private Tailscale TCP port 6082. This is HTTP inside the encrypted tailnet, not public Internet HTTP.'
+              # The runner is disposable and has no other Serve configuration.
+              # Reset is needed because HTTPS may have partially registered
+              # a 443 listener before a certificate/consent timeout.
+              $null = Invoke-TailscaleBounded -Arguments @('serve','reset') -Tag 'serve-reset-before-fallback' -Seconds 15
+              $url = Start-PrivateTcpServe
+              $transport = 'tailscale_tcp'
             }
-            $serveText = Invoke-TailscaleBounded -Arguments @('serve','--bg','--yes','--https=443','http://127.0.0.1:6081') -Tag 'serve-https' -Seconds 15
-            $serveState = Invoke-TailscaleBounded -Arguments @('serve','status') -Tag 'serve-status' -Seconds 10
-            if ($serveState -notmatch 'https://' -or $serveState -notmatch '6081') {
-              throw 'Tailscale HTTPS Serve did not confirm the HTTPS to 127.0.0.1:6081 mapping.'
-            }
-            $url = "https://$fqdn/vnc.html#resize=scale&autoconnect=1"
-            "NOVNC_HTTPS_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           } else {
             throw "Invalid novnc_transport: $transport"
           }
 
           "NOVNC_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           "NOVNC_TRANSPORT=$transport" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          "NOVNC_TRANSPORT_REQUESTED=$requestedTransport" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          if ($fallbackReason) {
+            "NOVNC_FALLBACK_REASON=$fallbackReason" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+            Write-Warning 'noVNC is available through tailnet TCP 6082 instead of requested HTTPS 443.'
+          }
+
           Write-Host '[noVNC 5/5] Private browser endpoint configured.'
           Write-Host "✅ noVNC browser URL (auto-fit + auto-connect): $url"
+          Write-Host "noVNC transport requested: $requestedTransport; active: $transport"
           Write-Host 'Fit-to-browser uses local scaling. True browser fullscreen requires a user click or F11; server-side fullscreen cannot be forced.'
           Write-Host 'A black desktop background may still reflect the active Windows console user/session; use Windows Personalization after connecting if needed.'
           Write-Host 'VNC RFB listens locally at 127.0.0.1:5900; web backend locally at 127.0.0.1:6081.'
@@ -3058,8 +3112,12 @@ jobs:
             $summaryLines.Add("| noVNC browser access | Value |") | Out-Null
             $summaryLines.Add("|---|---|") | Out-Null
             $summaryLines.Add("| noVNC preferred URL (try this first) | [$env:NOVNC_URL]($env:NOVNC_URL) |") | Out-Null
-            $summaryLines.Add("| Selected transport | $env:NOVNC_TRANSPORT |") | Out-Null
-            $summaryLines.Add("| Externally reachable ports | TCP Serve: 6082 OR HTTPS Serve: 443; never both for the same run |") | Out-Null
+            $summaryLines.Add("| Requested transport | $env:NOVNC_TRANSPORT_REQUESTED |") | Out-Null
+            $summaryLines.Add("| Active transport (verified) | $env:NOVNC_TRANSPORT |") | Out-Null
+            if ($env:NOVNC_FALLBACK_REASON) {
+              $summaryLines.Add("| HTTPS fallback | Requested HTTPS did not become ready; switched to Tailscale TCP 6082. Cause: $env:NOVNC_FALLBACK_REASON |") | Out-Null
+            }
+            $summaryLines.Add("| noVNC port in this run | $(if ($env:NOVNC_TRANSPORT -eq 'tailscale_tcp') { '6082 TCP (private tailnet)' } else { '443 HTTPS (private tailnet)' }) |") | Out-Null
             $summaryLines.Add("| Local-only ports (not published) | TightVNC 5900; websockify 6081 |") | Out-Null
             $summaryLines.Add("| noVNC localhost HTTP | $env:NOVNC_LOCAL_HTTP_STATUS |") | Out-Null
             $summaryLines.Add("| noVNC localhost WebSocket / VNC-RFB | $env:NOVNC_LOCAL_WS_STATUS |") | Out-Null

@@ -67,3 +67,36 @@ jobs:
           assert "cloudflared" not in runtime.lower()
           print("PASS: Linux workflow YAML, 20 desktop variants, secret use, loopback-only ports and cleanup")
           PY
+
+  smoke-debian-xfce:
+    name: "Smoke Debian Xfce desktop on localhost"
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      WFS_DISTRO: debian
+      WFS_DESKTOP: xfce
+      WFS_DURATION: "1"
+      WFS_TRANSPORT: tailnet_tls_tcp
+      WFS_APPS: none
+    steps:
+      - name: "📦 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "🔐 Prepare dummy smoke-test-only authentication"
+        env:
+          WFS_DESKTOP_PASSWORD: "CI-ONLY-LOCAL-TEST-PASSWORD-2026"
+        run: bash linux/workspace.sh prepare
+
+      - name: "🖥️ Launch actual Debian Xfce Webtop and test authenticated HTTPS"
+        timeout-minutes: 15
+        run: |
+          bash linux/workspace.sh start
+          test "$(docker inspect -f '{{.State.Running}}' wfs-linux-webtop)" = true
+          docker port wfs-linux-webtop 3001 | grep -F '127.0.0.1:13001'
+          docker port wfs-linux-webtop 3000 | grep -F '127.0.0.1:13000'
+          echo 'Runtime smoke passed: Docker desktop is running; HTTPS returned 200 with password; all ports bind to loopback.'
+
+      - name: "🧹 Always remove test desktop"
+        if: always()
+        run: bash linux/workspace.sh cleanup

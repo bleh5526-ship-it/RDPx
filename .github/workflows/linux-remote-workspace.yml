@@ -225,7 +225,6 @@ jobs:
           authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
           hostname: "${{ env.WFS_HOSTNAME }}"
           version: latest
-          args: "--accept-routes=false --accept-dns=false"
 
       - name: "🌐 Publish selected private RDP and/or web endpoints through Tailscale"
         timeout-minutes: 3

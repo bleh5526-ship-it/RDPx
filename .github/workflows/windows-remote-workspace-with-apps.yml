@@ -114,7 +114,7 @@ run-name: "🚀 Windows Workspace • ${{ inputs.remote_access }} • ${{ inputs
           - "all"
 
       install_artcraft:
-        description: "Install ArtCraft Launcher v0.3.2 (pilih aplikasi setelah masuk Windows)"
+        description: "Install ArtCraft Launcher stable terbaru (release resmi GitHub, checksum SHA-256)"
         required: true
         default: true
         type: boolean
@@ -844,40 +844,94 @@ jobs:
           }
 
           function Install-ArtCraft {
+            $ErrorActionPreference = 'Stop'
             $dir = Join-Path $env:ProgramData 'RDP-Setup\ArtCraft-Launcher-Installer'
             New-Item $dir -ItemType Directory -Force | Out-Null
-            $file = Join-Path $dir 'artcraft-launcher-0.3.2-windows-x64.msi'
+            $releaseUri = 'https://api.github.com/repos/storytold/craft-launcher/releases/latest'
+            $release = Invoke-RestMethod -Uri $releaseUri -TimeoutSec 40 -Headers @{
+              Accept = 'application/vnd.github+json'
+              'User-Agent' = 'WFS-Windows-Remote-Workspace'
+              'X-GitHub-Api-Version' = '2022-11-28'
+            } -ErrorAction Stop
+            if ($release.draft -or $release.prerelease) { throw 'Latest ArtCraft GitHub release is not stable.' }
+            $tag = [string]$release.tag_name
+            if ($tag -notmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+              throw "Unexpected ArtCraft release tag: $tag"
+            }
+            $version = $tag.Substring(1)
+            $assetName = "artcraft-launcher-$version-windows-x64.msi"
+            $assets = @($release.assets | Where-Object { $_.name -ceq $assetName })
+            if ($assets.Count -ne 1) { throw "Expected one official Windows x64 MSI in ArtCraft $tag, found $($assets.Count)." }
+            $asset = $assets[0]
+            $downloadUri = [string]$asset.browser_download_url
+            $expectedUri = "https://github.com/storytold/craft-launcher/releases/download/$tag/$assetName"
+            if ($downloadUri -cne $expectedUri) { throw 'Unexpected ArtCraft asset download host/path.' }
+            if ([string]$asset.digest -notmatch '^sha256:[a-fA-F0-9]{64}$') {
+              throw "Release $tag does not publish a valid SHA256 asset digest."
+            }
+            $shaExpected = ([string]$asset.digest).Substring(7)
+            if ([long]$asset.size -lt 1000000) { throw 'Unexpectedly small ArtCraft MSI release asset.' }
+            $file = Join-Path $dir $assetName
+            Write-Host "🎨 Downloading ArtCraft Launcher $tag (official stable release, Windows x64, verified SHA-256)..."
             try {
-              Write-Host '🎨 📥 Downloading ArtCraft Launcher v0.3.2 MSI...'
-              Invoke-WebRequest -Uri 'https://github.com/storytold/craft-launcher/releases/download/v0.3.2/artcraft-launcher-0.3.2-windows-x64.msi' -OutFile $file -UseBasicParsing -TimeoutSec 180 -ErrorAction Stop
-              if ((Get-FileHash $file -Algorithm SHA256).Hash -ne 'e1d147912aec78b40dfd2f3caf7e8a9fa887a285451cfc221f16a4f3a484065c') { throw '❌ ArtCraft Launcher MSI SHA256 mismatch.' }
-              $mutex = [Threading.Mutex]::new($false, 'Global\RdpWorkflowWingetInstall'); $locked = $false
+              Invoke-WebRequest -Uri $downloadUri -OutFile $file -UseBasicParsing -TimeoutSec 180 -ErrorAction Stop
+              if ((Get-Item -LiteralPath $file).Length -ne [long]$asset.size) {
+                throw 'ArtCraft MSI size does not match GitHub release metadata.'
+              }
+              $shaActual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+              if ($shaActual -ine $shaExpected) {
+                throw "ArtCraft $tag MSI SHA256 mismatch; aborting install."
+              }
+              $signature = Get-AuthenticodeSignature -LiteralPath $file
+              if ($signature.Status -eq 'Valid') {
+                Write-Host 'ArtCraft MSI Authenticode signature is valid.'
+              } elseif ($signature.Status -eq 'NotSigned') {
+                Write-Warning 'ArtCraft MSI is not Authenticode-signed; SHA256 matches official GitHub release metadata.'
+              } else {
+                throw "ArtCraft MSI has invalid Authenticode status: $($signature.Status)."
+              }
+              $mutex = [Threading.Mutex]::new($false, 'Global\RdpWorkflowWingetInstall')
+              $locked = $false
               try {
                 try { $locked = $mutex.WaitOne(300000) } catch [Threading.AbandonedMutexException] { $locked = $true }
-                if (-not $locked) { throw '❌ ArtCraft installer queue timeout.' }
-                $data = Invoke-RdpUserTask -Name ArtCraft -TimeoutSeconds 450 -Context @{ Installer = $file } -Script {
+                if (-not $locked) { throw 'ArtCraft installer queue timeout.' }
+                $data = Invoke-RdpUserTask -Name ArtCraft -TimeoutSeconds 450 -Context @{ Installer=$file; Version=$version } -Script {
                   $exe = Join-Path $env:LOCALAPPDATA 'Programs\ArtCraft Launcher\artcraft-launcher.exe'
-                  if (-not (Test-Path $exe)) {
+                  $actualVersion = ''
+                  if (Test-Path -LiteralPath $exe) {
+                    $info = (Get-Item -LiteralPath $exe).VersionInfo
+                    $candidate = [string]$info.ProductVersion
+                    if ($candidate -notmatch '\d+\.\d+\.\d+') { $candidate = [string]$info.FileVersion }
+                    if ($candidate -match '\d+\.\d+\.\d+') { $actualVersion = $Matches[0] }
+                  }
+                  if (-not (Test-Path -LiteralPath $exe) -or $actualVersion -ne [string]$ctx.Version) {
                     $log = Join-Path $PSScriptRoot 'msi.log'
-                    $args = @('/i', "`"$($ctx.Installer)`"", '/qn', '/norestart', 'INSTALLDESKTOPSHORTCUT=0', '/L*v', "`"$log`"")
-                    $p = Start-Process "$env:SystemRoot\System32\msiexec.exe" -ArgumentList $args -PassThru -Wait
-                    if ($p.ExitCode -notin @(0,3010,1641)) {
-                      if (Test-Path $log) { Get-Content $log -Tail 40 | Out-Host }
-                      if ($p.ExitCode -eq 1625) {
-                      Write-Host '❌ MSI 1625: installation blocked by policy; inspect the MSI log and effective application-control policies.'
-                      Get-WinEvent -FilterHashtable @{ LogName='Application'; ProviderName='MsiInstaller' } -MaxEvents 5 -ErrorAction SilentlyContinue |
-                        Select-Object TimeCreated, Id, Message | Format-List | Out-Host
-                    }
-                    throw "ArtCraft MSI exit: $($p.ExitCode)"
+                    $args = @('/i', ('"' + $ctx.Installer + '"'), '/qn', '/norestart', 'INSTALLDESKTOPSHORTCUT=0', '/L*v', ('"' + $log + '"'))
+                    $proc = Start-Process "$env:SystemRoot\System32\msiexec.exe" -ArgumentList $args -PassThru -Wait
+                    if ($proc.ExitCode -notin @(0,3010,1641)) {
+                      if (Test-Path $log) { Get-Content $log -Tail 50 | Out-Host }
+                      throw "ArtCraft Launcher $($ctx.Version) MSI exit code: $($proc.ExitCode)"
                     }
                   }
-                  if (-not (Test-Path $exe)) { throw 'ArtCraft Launcher executable missing from RDP profile.' }
-                  [pscustomobject]@{ Executable = $exe; Version = (Get-Item $exe).VersionInfo.FileVersion }
+                  if (-not (Test-Path -LiteralPath $exe)) { throw 'ArtCraft executable missing after MSI installation.' }
+                  $exeInfo = (Get-Item -LiteralPath $exe).VersionInfo
+                  $candidate = [string]$exeInfo.ProductVersion
+                  if ($candidate -notmatch '\d+\.\d+\.\d+') { $candidate = [string]$exeInfo.FileVersion }
+                  if ($candidate -match '\d+\.\d+\.\d+' -and $Matches[0] -ne [string]$ctx.Version) {
+                    throw "ArtCraft binary version $($Matches[0]) does not match requested version $($ctx.Version)."
+                  }
+                  [pscustomobject]@{ Executable=$exe; Version=[string]$ctx.Version; FileVersion=$candidate }
                 }
                 "ARTCRAFT_EXE=$($data.Executable)" | Add-Content $env:GITHUB_ENV -Encoding UTF8
-                Write-Host "✅ ArtCraft Launcher binary detected for RDP: $($data.Executable)"
-              } finally { if ($locked) { $mutex.ReleaseMutex() }; $mutex.Dispose() }
-            } finally { Remove-Item $file -Force -ErrorAction SilentlyContinue }
+                "ARTCRAFT_VERSION=$($data.Version)" | Add-Content $env:GITHUB_ENV -Encoding UTF8
+                Write-Host "✅ ArtCraft Launcher $($data.Version) installed under RDP user: $($data.Executable); binary version: $($data.FileVersion)"
+              } finally {
+                if ($locked) { $mutex.ReleaseMutex() }
+                $mutex.Dispose()
+              }
+            } finally {
+              Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+            }
           }
 
           function Install-OfficialPowerShellApp {
@@ -3067,7 +3121,7 @@ jobs:
           Add-Row $appRows "Hermes Agent" (Get-InstallStatus $wantedHermes $hermesDetected) "Official non-interactive installer"
           Add-Row $appRows "OpenClaw" (Get-InstallStatus $wantedOpenClaw $openclawDetected) "Official installer; onboarding skipped"
           Add-Row $appRows "OpenCode" (Get-InstallStatus $wantedOpenCode $openCodeDetected) "npm package ``opencode-ai``"
-          Add-Row $appRows "ArtCraft Launcher" (Get-InstallStatus $installArtCraft $artCraftDetected) "Official v0.3.2 MSI; choose suite apps inside launcher"
+          Add-Row $appRows "ArtCraft Launcher" (Get-InstallStatus $installArtCraft $artCraftDetected) "GitHub stable release v$env:ARTCRAFT_VERSION (Windows x64 MSI; SHA256 verified)"
 
           $extensionRows = [System.Collections.Generic.List[string]]::new()
           $extensionRows.Add("| Target | Extension / Feature | Status |") | Out-Null

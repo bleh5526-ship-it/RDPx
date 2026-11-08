@@ -25,7 +25,7 @@ WFS Windows Remote Workspace menggunakan **GitHub-hosted Windows runner sementar
 |:--|:--|
 | 🖥️ Mode | `rdp`, `novnc`, atau `both` |
 | 🔐 Jaringan | Tailscale privat; tanpa tunnel publik |
-| 🌐 noVNC | Satu transport dipilih per run: TCP `6082` atau HTTPS `443` |
+| 🌐 noVNC | TCP `6082` atau HTTPS `443`; **auto-fit browser** dan auto-connect pada run baru |
 | ⏳ Durasi | Pilihan `1`, `3`, atau `6` jam setelah setup, tetap tunduk pada batas job total `360` menit |
 | 🔎 Verifikasi | Pemeriksaan HTTP, WebSocket, dan handshake RFB/VNC |
 | 🧹 Penutupan | Logout Tailscale saat selesai, dengan penanganan cleanup best-effort |
@@ -123,14 +123,32 @@ Pastikan `remote_access=novnc` atau `both`. Buka **alamat aktual yang dicetak pa
 
 | Transport | Format URL | Catatan |
 |:--|:--|:--|
-| `tailscale_tcp` | `http://100.x.x.x:6082/vnc.html` | **HTTP** pada port 6082; lalu autentikasi VNC |
-| `tailscale_https` | `https://nama-host.tailnet.ts.net/vnc.html` | **HTTPS** via Tailscale Serve port 443; FQDN sebenarnya ada di Summary |
+| `tailscale_tcp` | `http://100.x.x.x:6082/vnc.html#resize=scale&autoconnect=1` | **HTTP** pada port 6082; lalu autentikasi VNC |
+| `tailscale_https` | `https://nama-host.tailnet.ts.net/vnc.html#resize=scale&autoconnect=1` | **HTTPS** via Tailscale Serve port 443; FQDN sebenarnya ada di Summary |
 
-Klik **Connect**, lalu isi password VNC. **Jangan** mengganti `http://` menjadi `https://` pada port `6082`: port tersebut adalah proxy TCP yang meneruskan HTTP, bukan listener TLS. Transport Tailscale tetap mengenkripsi koneksi antar-perangkat dalam tailnet.
+Halaman noVNC kini **mencoba terkoneksi otomatis** ketika dibuka (password VNC tetap diminta jika diperlukan). **Jangan** mengganti `http://` menjadi `https://` pada port `6082`: port tersebut adalah proxy TCP yang meneruskan HTTP, bukan listener TLS. Transport Tailscale tetap mengenkripsi koneksi antar-perangkat dalam tailnet.
 
 noVNC mengakses **sesi console Windows**, yang dapat berbeda dari desktop user pada sesi RDP. Keberhasilan membuka HTML tidak otomatis berarti koneksi WebSocket atau layar VNC sudah berfungsi.
 
 </details>
+
+## 🖼️ Wallpaper dan layar browser otomatis
+
+Pada runner Windows sementara, background console dapat tampak hitam karena profil Windows yang aktif atau konfigurasi tampilannya. Itu **tidak otomatis berarti koneksi noVNC rusak** jika taskbar/ikon/aplikasi terlihat dan dapat dipakai. Tampilan console noVNC juga dapat berbeda dari sesi login RDP.
+
+Workflow terbaru mencoba menggunakan **wallpaper bawaan Windows** jika wallpaper belum disetel dan tidak lagi memaksakan opsi visual "best performance". Ini *best effort*: wallpaper mungkin tetap gelap jika console yang dilihat berbeda dari profil Windows yang diubah. Jika ingin mengganti secara manual, di desktop remote pilih **klik kanan → Personalize → Background → Picture**.
+
+**Skala tampilan otomatis:** noVNC diatur dengan `resize=scale`, sehingga gambar desktop mengecil/membesar mengikuti ukuran jendela browser. Mode ini **tidak mengubah resolusi asli Windows**, jadi pada monitor dengan rasio berbeda bisa muncul sedikit ruang kosong pada tepi. Ini lebih kompatibel dibanding mode `resize=remote` yang membutuhkan dukungan resize dari server VNC.
+
+**Layar penuh:** noVNC tidak dapat otomatis mengambil kontrol fullscreen browser tanpa interaksi pengguna. Gunakan **F11** di browser atau ikon **Full screen** pada toolbar noVNC. Untuk mengubah pengaturan secara manual: **noVNC → Settings → Scaling mode → Local scaling**.
+
+Jika ingin mengubahnya pada koneksi yang **sudah berjalan**, cukup tambahkan fragment berikut setelah `vnc.html` di address bar (tanpa membuat ulang runner):
+
+```text
+#resize=scale&autoconnect=1
+```
+
+Refresh halaman jika perlu; Anda akan diminta autentikasi VNC lagi bila sesi baru memerlukannya. Pengaturan otomatis dari workflow hanya berlaku untuk **run baru** setelah perubahan di GitHub.
 
 ## 🔬 Verifikasi di Actions
 
@@ -185,7 +203,7 @@ curl.exe --noproxy "*" --max-time 15 -sS -o NUL -w "HTTP %{http_code}\n" "http:/
 | Password VNC ditolak | Periksa pilihan password mode; VNCAuth hanya memproses delapan byte pertama |
 | Ingin HTTPS tanpa port 6082 | Aktifkan sertifikat/Serve HTTPS di tailnet dan pilih `tailscale_https` pada run berikutnya |
 
-Untuk diagnosis koneksi noVNC lebih detail, buka halaman dengan `?logging=debug` lalu lihat Developer Tools di browser.
+Untuk diagnosis koneksi noVNC lebih detail, tambahkan `&logging=debug` ke URL yang sudah berisi `#resize=scale&autoconnect=1`, lalu lihat Developer Tools di browser.
 
 ## ⏳ Durasi, Keep Alive, dan cleanup
 

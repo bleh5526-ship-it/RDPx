@@ -3062,6 +3062,76 @@ jobs:
 
           $summaryLines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
+      - name: 🛡️ Hide runner console without closing GitHub Actions
+        if: inputs.remote_access != 'rdp'
+        shell: pwsh
+        continue-on-error: true
+        timeout-minutes: 1
+        run: |
+          # The viewer sees the runner's interactive Windows console. Closing
+          # its actual Runner.Listener console may shut down the whole job.
+          # Only hide that specific window; NEVER terminate runner processes.
+          $base = Join-Path $env:ProgramData 'RDP-Setup'
+          New-Item -Path $base -ItemType Directory -Force | Out-Null
+          $helper = Join-Path $base 'wfs-hide-runner-console.ps1'
+          $stdout = Join-Path $base 'wfs-hide-console.stdout.log'
+          $stderr = Join-Path $base 'wfs-hide-console.stderr.log'
+          @'
+          $ErrorActionPreference = 'Stop'
+          Add-Type -TypeDefinition @"
+          using System;
+          using System.Runtime.InteropServices;
+          public static class WfsRunnerConsole {
+            [DllImport("kernel32.dll", SetLastError=true)] public static extern bool FreeConsole();
+            [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AttachConsole(uint processId);
+            [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr GetConsoleWindow();
+            [DllImport("user32.dll", SetLastError=true)] public static extern bool ShowWindowAsync(IntPtr window, int command);
+            [DllImport("user32.dll", SetLastError=true)] public static extern bool IsWindowVisible(IntPtr window);
+          }
+          "@
+          $listener = Get-Process -Name 'Runner.Listener' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $listener) {
+            Write-Output 'No Runner.Listener process found; skipping console hide.'
+            exit 0
+          }
+          # Operate in a short-lived child PowerShell to avoid detaching the
+          # workflow step itself from its output/runner connection.
+          [void][WfsRunnerConsole]::FreeConsole()
+          if (-not [WfsRunnerConsole]::AttachConsole([uint32]$listener.Id)) {
+            Write-Output "Runner.Listener PID $($listener.Id) has no attachable console."
+            exit 0
+          }
+          $hwnd = [WfsRunnerConsole]::GetConsoleWindow()
+          [void][WfsRunnerConsole]::FreeConsole()
+          if ($hwnd -eq [IntPtr]::Zero) {
+            Write-Output 'Runner.Listener console has no window to hide.'
+            exit 0
+          }
+          if ([WfsRunnerConsole]::IsWindowVisible($hwnd)) {
+            [void][WfsRunnerConsole]::ShowWindowAsync($hwnd,0)
+            Write-Output "Runner.Listener window hidden; PID $($listener.Id) remains active."
+          } else {
+            Write-Output 'Runner.Listener console is already hidden.'
+          }
+          '@ | Set-Content -LiteralPath $helper -Encoding UTF8
+          try {
+            $shell = Join-Path $PSHOME 'pwsh.exe'
+            $args = '-NoProfile -NonInteractive -File "' + $helper + '"'
+            $child = Start-Process -FilePath $shell -ArgumentList $args -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            if (-not $child.WaitForExit(15000)) {
+              try { $child.Kill($true) } catch { Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue }
+              Write-Warning 'Optional runner window hide timed out.'
+            } else {
+              if (Test-Path $stdout) { Get-Content -LiteralPath $stdout -ErrorAction SilentlyContinue | Out-Host }
+              if ($child.ExitCode -ne 0) {
+                Write-Warning 'Runner console was not hidden; do not manually close the GitHub runner terminal.'
+                if (Test-Path $stderr) { Get-Content -LiteralPath $stderr -Tail 10 | Out-Host }
+              }
+            }
+          } catch {
+            Write-Warning "Optional runner console hiding unavailable: $($_.Exception.Message)"
+          }
+
       - name: 🟢 Remote READY - Keep Alive (session intentionally remains running)
         shell: pwsh
         run: |

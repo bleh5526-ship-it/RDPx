@@ -5,6 +5,7 @@ name=wfs-linux-webtop
 state="$RUNNER_TEMP/wfs-linux"
 config="$state/config"
 password_file="$state/web-password"
+rdp_password_file="$state/rdp-password"
 notice() { printf '[WFS Linux] %s\n' "$*"; }
 die() { echo "::error::$*" >&2; exit 1; }
 validate() {
@@ -13,18 +14,35 @@ validate() {
   case "$WFS_DURATION" in 1|3|6) ;; *) die "Invalid duration";; esac
   case "$WFS_TRANSPORT" in auto|tailnet_https|tailnet_tls_tcp) ;; *) die "Invalid transport";; esac
   case "$WFS_APPS" in none|developer|office|media|all) ;; *) die "Invalid app bundle";; esac
+  case "$WFS_REMOTE" in rdp|novnc|both) ;; *) die "Invalid remote choice";; esac
+  if [ "$WFS_DISTRO" = arch ] && [ "$WFS_REMOTE" != novnc ]; then
+    die "Native xrdp for Arch is not packaged upstream; choose Debian/Ubuntu/Fedora/Alpine for RDP or use novnc."
+  fi
 }
 prepare() {
   validate
-  [ -n "$WFS_DESKTOP_PASSWORD" ] || die "Create secret LINUX_DESKTOP_PASSWORD first."
-  [ "$(printf '%s' "$WFS_DESKTOP_PASSWORD" | wc -c)" -ge 12 ] || die "Desktop password must be >=12 bytes."
   umask 077
   mkdir -p "$config"
   chmod 700 "$state"
-  printf '%s' "$WFS_DESKTOP_PASSWORD" > "$password_file"
+  if [ "$WFS_REMOTE" = rdp ] || [ "$WFS_REMOTE" = both ]; then
+    [ -n "$WFS_RDP_PASSWORD" ] || die "RDP_PASSWORD GitHub secret missing."
+    [ "$(printf '%s' "$WFS_RDP_PASSWORD" | wc -c)" -ge 8 ] || die "RDP_PASSWORD must have at least eight bytes."
+    if [ "$(printf '%s' "$WFS_RDP_PASSWORD" | wc -l)" -ne 0 ]; then die "RDP_PASSWORD cannot contain newlines."; fi
+    printf '%s' "$WFS_RDP_PASSWORD" > "$rdp_password_file"
+    chmod 600 "$rdp_password_file"
+  fi
+  if [ "$WFS_REMOTE" = novnc ] || [ "$WFS_REMOTE" = both ]; then
+    [ -n "$WFS_VNC_PASSWORD" ] || die "VNC_PASSWORD GitHub secret missing."
+    [ "$(printf '%s' "$WFS_VNC_PASSWORD" | wc -c)" -ge 8 ] || die "VNC_PASSWORD must have at least eight bytes."
+    if [ "$(printf '%s' "$WFS_VNC_PASSWORD" | wc -l)" -ne 0 ]; then die "VNC_PASSWORD cannot contain newlines."; fi
+    printf '%s' "$WFS_VNC_PASSWORD" > "$password_file"
+  else
+    cp "$rdp_password_file" "$password_file"
+  fi
   chmod 600 "$password_file"
-  notice "Configuration validated: $WFS_DISTRO / $WFS_DESKTOP; secret kept off logs."
+  notice "Prepared $WFS_DISTRO/$WFS_DESKTOP remote=$WFS_REMOTE with existing Windows RDP/VNC secrets."
 }
+
 start() {
   validate
   [ -s "$password_file" ] || die "Password file missing."
@@ -32,8 +50,13 @@ start() {
   notice "Pulling $image"
   docker pull "$image"
   docker rm -f "$name" >/dev/null 2>&1 || true
+  local -a rdp_args=()
+  if [ "$WFS_REMOTE" = rdp ] || [ "$WFS_REMOTE" = both ]; then
+    [ -s "$rdp_password_file" ] || die "RDP password file missing."
+    rdp_args=(-p 127.0.0.1:13389:3389 --mount "type=bind,src=$rdp_password_file,dst=/run/secrets/rdp_password,readonly")
+  fi
   docker run -d --name "$name" --shm-size=1g --memory=8g --cpus=3 --restart=no \
-    -p 127.0.0.1:13001:3001 -p 127.0.0.1:13000:3000 \
+    -p 127.0.0.1:13001:3001 -p 127.0.0.1:13000:3000 "${rdp_args[@]}" \
     --mount "type=bind,src=$config,dst=/config" \
     --mount "type=bind,src=$password_file,dst=/run/secrets/web_password,readonly" \
     -e "PUID=$(id -u)" -e "PGID=$(id -g)" \

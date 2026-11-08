@@ -79,7 +79,7 @@ jobs:
       WFS_APPS: ${{ inputs.apps_bundle }}
     steps:
       - name: "📦 Checkout Linux workspace scripts"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: "🔐 Validate inputs and protect Linux desktop password"
         env:

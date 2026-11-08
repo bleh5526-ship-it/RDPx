@@ -134,11 +134,11 @@ noVNC mengakses **sesi console Windows**, yang dapat berbeda dari desktop user p
 
 ## 🖼️ Wallpaper dan layar browser otomatis
 
-Pada runner Windows sementara, background console dapat tampak hitam karena profil Windows yang aktif atau konfigurasi tampilannya. Itu **tidak otomatis berarti koneksi noVNC rusak** jika taskbar/ikon/aplikasi terlihat dan dapat dipakai. Tampilan console noVNC juga dapat berbeda dari sesi login RDP.
+**Penyebab wallpaper hitam teridentifikasi:** TightVNC memasang `RemoveWallpaper=1` secara default, yang menyembunyikan wallpaper saat VNC tersambung. Workflow sekarang memasang `VALUE_OF_REMOVEWALLPAPER=0` dan memverifikasi registry serta servis setelah instalasi. Tampilan tetap dapat berbeda antara sesi console dan sesi RDP.
 
 Workflow terbaru mencoba menggunakan **wallpaper bawaan Windows** jika wallpaper belum disetel dan tidak lagi memaksakan opsi visual "best performance". Ini *best effort*: wallpaper mungkin tetap gelap jika console yang dilihat berbeda dari profil Windows yang diubah. Jika ingin mengganti secara manual, di desktop remote pilih **klik kanan → Personalize → Background → Picture**.
 
-**Skala tampilan otomatis:** noVNC diatur dengan `resize=scale`, sehingga gambar desktop mengecil/membesar mengikuti ukuran jendela browser. Mode ini **tidak mengubah resolusi asli Windows**, jadi pada monitor dengan rasio berbeda bisa muncul sedikit ruang kosong pada tepi. Ini lebih kompatibel dibanding mode `resize=remote` yang membutuhkan dukungan resize dari server VNC.
+**Skala tampilan otomatis:** noVNC tetap menggunakan `resize=scale`, dan workflow baru mencoba resolusi 16:9 (`1920×1080`, `1600×900`, `1366×768`, atau `1280×720`) hanya jika didukung driver Windows. Jika tidak didukung, resolusi asli dipertahankan; ruang kosong di tepi masih dapat muncul karena perbedaan rasio. Browser tetap memerlukan klik atau F11 untuk fullscreen.
 
 **Layar penuh:** noVNC tidak dapat otomatis mengambil kontrol fullscreen browser tanpa interaksi pengguna. Gunakan **F11** di browser atau ikon **Full screen** pada toolbar noVNC. Untuk mengubah pengaturan secara manual: **noVNC → Settings → Scaling mode → Local scaling**.
 
@@ -205,6 +205,13 @@ curl.exe --noproxy "*" --max-time 15 -sS -o NUL -w "HTTP %{http_code}\n" "http:/
 
 Untuk diagnosis koneksi noVNC lebih detail, tambahkan `&logging=debug` ke URL yang sudah berisi `#resize=scale&autoconnect=1`, lalu lihat Developer Tools di browser.
 
+### 🛡️ Jangan tutup terminal GitHub runner
+
+Log [run #42505446065](https://github.com/wawanwfs/RDP/actions/runs/42505446065) menunjukkan runner menerima shutdown signal **sebelum** Tailscale logout. Karena runner GitHub-hosted bersifat sementara, menutup jendela console yang menjalankan proses runner dapat menghentikan seluruh sesi.
+
+Workflow terbaru mencoba menyembunyikan jendela console proses **Runner.Listener** tanpa mematikan proses tersebut. Ini best effort: jika proses tidak memiliki console yang dapat diakses, langkah tersebut dilewati dengan peringatan.
+
+Untuk meninggalkan desktop, gunakan **Disconnect** pada noVNC atau tutup tab browser—**jangan menutup terminal GitHub runner jika masih terlihat**. Logout dari blok `finally` pada Keep Alive sudah dihapus; logout Tailscale kini ditangani oleh step terpisah **Cleanup Tailscale Logout**. Jika GitHub menghentikan runner, koneksi tetap tidak dapat dipertahankan.
 ## ⏳ Durasi, Keep Alive, dan cleanup
 
 - `duration_hours` tersedia dengan pilihan **1, 3, atau 6 jam**; penghitung sesi dimulai saat langkah **Remote READY – Keep Alive** berjalan.

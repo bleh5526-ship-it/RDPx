@@ -15,6 +15,16 @@ validate() {
   case "$WFS_TRANSPORT" in auto|tailnet_https|tailnet_tls_tcp) ;; *) die "Invalid transport";; esac
   case "$WFS_APPS" in none|developer|office|media|all) ;; *) die "Invalid app bundle";; esac
   case "$WFS_REMOTE" in rdp|novnc|both) ;; *) die "Invalid remote choice";; esac
+  case "$WFS_HOSTNAME_MODE" in same_each_run|unique_each_run) ;; *) die "Invalid hostname mode";; esac
+  case "$WFS_RDP_PASSWORD_MODE" in random_each_run|same_from_secret) ;; *) die "Invalid RDP password mode";; esac
+  case "$WFS_VNC_PASSWORD_MODE" in random_each_run|same_from_secret) ;; *) die "Invalid VNC password mode";; esac
+  [[ "$WFS_HOSTNAME_BASE" =~ ^[a-z][a-z0-9-]{0,39}$ ]] || die "Hostname must be 1–40 chars: lowercase letters, numbers and hyphens."
+  [[ "$WFS_RDP_USERNAME" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] || die "Invalid Linux RDP username."
+  [[ "$WFS_WEB_USERNAME" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] || die "Invalid Linux web username."
+  if [ "$WFS_DISTRO" = arch ] && [ "$WFS_REMOTE" != novnc ]; then
+    die "Arch xrdp requires AUR; choose Debian/Ubuntu/Fedora/Alpine for native RDP or novnc for Arch."
+  fi
+  case "$WFS_REMOTE" in rdp|novnc|both) ;; *) die "Invalid remote choice";; esac
   if [ "$WFS_DISTRO" = arch ] && [ "$WFS_REMOTE" != novnc ]; then
     die "Native xrdp for Arch is not packaged upstream; choose Debian/Ubuntu/Fedora/Alpine for RDP or use novnc."
   fi
@@ -24,23 +34,48 @@ prepare() {
   umask 077
   mkdir -p "$config"
   chmod 700 "$state"
-  if [ "$WFS_REMOTE" = rdp ] || [ "$WFS_REMOTE" = both ]; then
-    [ -n "$WFS_RDP_PASSWORD" ] || die "RDP_PASSWORD GitHub secret missing."
-    [ "$(printf '%s' "$WFS_RDP_PASSWORD" | wc -c)" -ge 8 ] || die "RDP_PASSWORD must have at least eight bytes."
-    if [ "$(printf '%s' "$WFS_RDP_PASSWORD" | wc -l)" -ne 0 ]; then die "RDP_PASSWORD cannot contain newlines."; fi
-    printf '%s' "$WFS_RDP_PASSWORD" > "$rdp_password_file"
-    chmod 600 "$rdp_password_file"
+  export WFS_PASSWORD_DIR="$state"
+  # Passwords for random_each_run are deterministic per run, but never shown
+  # in public GitHub Actions logs. Users derive them locally with their
+  # existing secret and run ID; see README.
+  python3 - <<'PY'
+import hashlib, hmac, os, pathlib, re
+root = pathlib.Path(os.environ["WFS_PASSWORD_DIR"])
+run = os.environ["GITHUB_RUN_ID"]
+checks = [
+    ("rdp", "WFS_RDP_PASSWORD", "WFS_RDP_PASSWORD_MODE", "rdp-password"),
+    ("web", "WFS_VNC_PASSWORD", "WFS_VNC_PASSWORD_MODE", "web-password"),
+]
+remote = os.environ["WFS_REMOTE"]
+for label, key, setting, file in checks:
+    needed = (label == "rdp" and remote in ("rdp", "both")) or (
+        label == "web" and remote in ("novnc", "both"))
+    if not needed:
+        continue
+    original = os.environ.get(key, "")
+    if len(original.encode("utf8")) < 8 or "\n" in original or "\r" in original:
+        raise SystemExit(f"{key} secret must have 8+ bytes, without newlines.")
+    mode = os.environ[setting]
+    password = original if mode == "same_from_secret" else hmac.new(
+        original.encode("utf8"), f"wfs:{run}:{label}".encode("utf8"),
+        hashlib.sha256).hexdigest()[:24]
+    dest = root / file
+    dest.write_text(password, encoding="utf8")
+    dest.chmod(0o600)
+    print(f"[WFS Linux] {label} password mode={mode}, credentials masked (never logged).")
+# Webtop always runs internally; RDP-only never exposes browser port.
+if remote == "rdp":
+    dest = root / "web-password"
+    dest.write_bytes((root / "rdp-password").read_bytes())
+    dest.chmod(0o600)
+PY
+  local hostname="$WFS_HOSTNAME_BASE"
+  if [ "$WFS_HOSTNAME_MODE" = unique_each_run ]; then
+    hostname="${WFS_HOSTNAME_BASE}-${GITHUB_RUN_ID}"
   fi
-  if [ "$WFS_REMOTE" = novnc ] || [ "$WFS_REMOTE" = both ]; then
-    [ -n "$WFS_VNC_PASSWORD" ] || die "VNC_PASSWORD GitHub secret missing."
-    [ "$(printf '%s' "$WFS_VNC_PASSWORD" | wc -c)" -ge 8 ] || die "VNC_PASSWORD must have at least eight bytes."
-    if [ "$(printf '%s' "$WFS_VNC_PASSWORD" | wc -l)" -ne 0 ]; then die "VNC_PASSWORD cannot contain newlines."; fi
-    printf '%s' "$WFS_VNC_PASSWORD" > "$password_file"
-  else
-    cp "$rdp_password_file" "$password_file"
-  fi
-  chmod 600 "$password_file"
-  notice "Prepared $WFS_DISTRO/$WFS_DESKTOP remote=$WFS_REMOTE with existing Windows RDP/VNC secrets."
+  echo "WFS_HOSTNAME=$hostname" >> "$GITHUB_ENV"
+  notice "Runner hostname=$hostname, xrdp user=$WFS_RDP_USERNAME, web user=$WFS_WEB_USERNAME, remote=$WFS_REMOTE."
+  notice "Using existing RDP_PASSWORD and VNC_PASSWORD GitHub secrets only."
 }
 
 start() {
@@ -60,7 +95,7 @@ start() {
     --mount "type=bind,src=$config,dst=/config" \
     --mount "type=bind,src=$password_file,dst=/run/secrets/web_password,readonly" \
     -e "PUID=$(id -u)" -e "PGID=$(id -g)" \
-    -e TZ=Etc/UTC -e CUSTOM_USER=wfs -e FILE__PASSWORD=/run/secrets/web_password \
+    -e TZ=Etc/UTC -e "CUSTOM_USER=$WFS_WEB_USERNAME" -e FILE__PASSWORD=/run/secrets/web_password \
     -e SELKIES_ENABLE_RESIZE=true -e SELKIES_MANUAL_RESOLUTION=false \
     -e SELKIES_USE_CSS_SCALING=false "$image" >/dev/null
   local code=""
@@ -154,7 +189,7 @@ publish() {
     echo "WFS_ACTIVE_TRANSPORT=$browser_transport"
   } >> "$GITHUB_ENV"
   notice "Tailscale private RDP: ${rdp_address:-disabled}. Web: ${browser_url:-disabled}."
-  notice "Credentials: wfsrdp / RDP_PASSWORD and wfs / VNC_PASSWORD."
+  notice "Credentials: $WFS_RDP_USERNAME / RDP_PASSWORD and $WFS_WEB_USERNAME / VNC_PASSWORD (mode in Summary)."
   [ -z "$browser_url" ] || echo "::notice title=Linux Web Remote::$browser_url"
   [ -z "$rdp_address" ] || echo "::notice title=Linux Native RDP::$rdp_address"
 }
@@ -168,12 +203,13 @@ summary() {
 | Distro / desktop | **$WFS_DISTRO / $WFS_DESKTOP** |
 | Image | $WFS_IMAGE |
 | Remote choice | **$WFS_REMOTE** |
+| Tailscale hostname | **$WFS_HOSTNAME** |
 | **Native RDP address (mstsc)** | ${WFS_RDP_ADDRESS:-Not enabled} |
-| RDP username | **wfsrdp** |
-| RDP password | GitHub Secret RDP_PASSWORD |
+| RDP username | **$WFS_RDP_USERNAME** |
+| RDP password | **$WFS_RDP_PASSWORD_MODE** from RDP_PASSWORD |
 | **Browser address (Selkies/noVNC equivalent)** | ${WFS_LINUX_URL:-Not enabled} |
-| Browser username | **wfs** |
-| Browser password | GitHub Secret VNC_PASSWORD |
+| Browser username | **$WFS_WEB_USERNAME** |
+| Browser password | **$WFS_VNC_PASSWORD_MODE** from VNC_PASSWORD |
 | Web transport | ${WFS_ACTIVE_TRANSPORT:-none} |
 | Browser resolution | Automatic Selkies resizing |
 | Optional apps | $WFS_APPS |

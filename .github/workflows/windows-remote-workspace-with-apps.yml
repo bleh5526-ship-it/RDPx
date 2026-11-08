@@ -2309,6 +2309,7 @@ jobs:
 
       - name: 🌐 Install noVNC Browser Remote (Tailscale Only)
         if: inputs.remote_access != 'rdp'
+        timeout-minutes: 5
         shell: pwsh
         env:
           VNC_PASSWORD_SECRET: ${{ secrets.VNC_PASSWORD }}

@@ -26,13 +26,13 @@ on:
           - "kde"
           - "i3"
       remote_access:
-        description: "Jenis remote Linux: native RDP, browser Selkies, atau keduanya"
+        description: "Remote seperti Windows: RDP, noVNC/web Selkies, atau keduanya"
         required: true
         type: choice
-        default: "browser"
+        default: "novnc"
         options:
           - "rdp"
-          - "browser"
+          - "novnc"
           - "both"
       ide_choice:
         description: "IDE seperti Windows: VS Code / Antigravity / Both"
@@ -159,9 +159,10 @@ jobs:
       - name: "📦 Checkout Linux workspace scripts"
         uses: actions/checkout@v7.0.1
 
-      - name: "🔐 Validate inputs and protect Linux desktop password"
+      - name: "🔐 Reuse Windows RDP_PASSWORD and VNC_PASSWORD securely"
         env:
-          WFS_DESKTOP_PASSWORD: ${{ secrets.LINUX_DESKTOP_PASSWORD }}
+          WFS_RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+          WFS_VNC_PASSWORD: ${{ secrets.VNC_PASSWORD }}
         run: bash linux/workspace.sh prepare
 
       - name: "🐧 Start selected Linux distro + responsive desktop"
@@ -181,7 +182,7 @@ jobs:
           version: latest
           args: "--accept-routes=false --accept-dns=false"
 
-      - name: "🌐 Publish private browser/RDP endpoints through Tailscale"
+      - name: "🌐 Publish selected private RDP and/or web endpoints through Tailscale"
         timeout-minutes: 3
         run: bash linux/workspace.sh publish
 
@@ -197,10 +198,10 @@ jobs:
         continue-on-error: true
         run: bash linux/install-artcraft.sh
 
-      - name: "📊 Print Linux browser URL and session guide"
+      - name: "📊 Print Linux RDP / web URLs and session guide"
         run: bash linux/workspace.sh summary
 
-      - name: "🟢 Remote READY — Keep Alive (do not close runner)"
+      - name: "🟢 Remote READY — Keep Alive for RDP and web"
         timeout-minutes: 355
         run: bash linux/workspace.sh keepalive
 

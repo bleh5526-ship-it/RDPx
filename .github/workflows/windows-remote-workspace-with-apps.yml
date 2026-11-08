@@ -3058,7 +3058,7 @@ jobs:
 
           $summaryLines.Add("## 🧹 Cleanup") | Out-Null
           $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("Saat runtime selesai, gagal, atau workflow masuk cleanup, step terakhir akan mencoba menjalankan ``tailscale logout`` otomatis.") | Out-Null
+          $summaryLines.Add("Jangan tutup terminal GitHub runner karena itu dapat menghentikan job. Tailscale logout dikelola oleh step Cleanup, bukan oleh finally Keep Alive.") | Out-Null
 
           $summaryLines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
@@ -3073,23 +3073,6 @@ jobs:
             $passwordForDisplay = "Use GitHub Secret RDP_PASSWORD"
           } else {
             $passwordForDisplay = $env:RDP_PASSWORD
-          }
-
-          function Logout-TailscaleSafely {
-            $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-
-            if (Test-Path $tsExe) {
-              Write-Host "Logging out from Tailscale..."
-              & $tsExe logout
-
-              if ($LASTEXITCODE -eq 0) {
-                Write-Host "✅ Tailscale logout completed"
-              } else {
-                Write-Warning "⚠️ Tailscale logout returned exit code $LASTEXITCODE"
-              }
-            } else {
-              Write-Host "tailscale.exe not found. Skipping logout."
-            }
           }
 
           Write-Host ""
@@ -3115,24 +3098,19 @@ jobs:
           Write-Host "╚══════════════════════════════════════╝"
           Write-Host ""
 
-          try {
-            $hours = [int]'${{ inputs.duration_hours }}'
-            $seconds = $hours * 3600
-            $elapsed = 0
-
-            Write-Host "Remote is ready. This step intentionally stays active for $hours hour(s)."
-            while ($elapsed -lt $seconds) {
-              $minutesLeft = [Math]::Ceiling(($seconds - $elapsed) / 60)
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Remote READY - $minutesLeft minute(s) remaining"
-              $sleepFor = [Math]::Min(60, $seconds - $elapsed)
-              Start-Sleep -Seconds $sleepFor
-              $elapsed += $sleepFor
-            }
-
-            Write-Host "Session completed."
-          } finally {
-            Logout-TailscaleSafely
+          $hours = [int]'${{ inputs.duration_hours }}'
+          $seconds = $hours * 3600
+          $elapsed = 0
+          Write-Host "Remote is ready. This step intentionally stays active for $hours hour(s)."
+          Write-Host 'Do not close the GitHub runner console; use the noVNC Disconnect button instead.'
+          while ($elapsed -lt $seconds) {
+            $minutesLeft = [Math]::Ceiling(($seconds - $elapsed) / 60)
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Remote READY - $minutesLeft minute(s) remaining"
+            $sleepFor = [Math]::Min(60, $seconds - $elapsed)
+            Start-Sleep -Seconds $sleepFor
+            $elapsed += $sleepFor
           }
+          Write-Host 'Session ended normally. Cleanup step will handle Tailscale logout.'
 
       - name: 🧹 Cleanup Tailscale Logout
         if: always()

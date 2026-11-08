@@ -1,0 +1,69 @@
+name: "🧪 Linux Workspace — Static Checks"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "linux/**"
+      - ".github/workflows/linux-remote-workspace.yml"
+      - ".github/workflows/linux-workspace-checks.yml"
+  pull_request:
+    paths:
+      - "linux/**"
+      - ".github/workflows/linux-remote-workspace.yml"
+      - ".github/workflows/linux-workspace-checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: "📦 Checkout"
+        uses: actions/checkout@v4
+      - name: "🐚 Validate Bash scripts"
+        run: |
+          set -euo pipefail
+          for file in linux/*.sh; do
+            bash -n "$file"
+            echo "PASS syntax: $file"
+          done
+      - name: "🧪 Validate workflow, supported combinations and safety controls"
+        run: |
+          python3 -m pip install --disable-pip-version-check --quiet 'PyYAML==6.0.3'
+          python3 - <<'PY'
+          import pathlib, yaml
+          workflow = pathlib.Path(".github/workflows/linux-remote-workspace.yml")
+          data = yaml.load(workflow.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+          assert isinstance(data, dict) and isinstance(data.get("jobs"), dict)
+          inputs = data["on"]["workflow_dispatch"]["inputs"]
+          assert inputs["distro"]["options"] == ["debian", "ubuntu", "fedora", "arch", "alpine"]
+          assert inputs["desktop"]["options"] == ["xfce", "mate", "kde", "i3"]
+          assert inputs["duration_hours"]["options"] == ["1", "3", "6"]
+          assert len(inputs["distro"]["options"]) * len(inputs["desktop"]["options"]) == 20
+          assert inputs["transport"]["default"] == "auto"
+          job = data["jobs"]["linux-remote-workspace"]
+          assert job["runs-on"] == "ubuntu-24.04"
+          assert job["timeout-minutes"] == "360"
+          text = workflow.read_text(encoding="utf-8")
+          runtime = pathlib.Path("linux/workspace.sh").read_text(encoding="utf-8")
+          for required in (
+              "secrets.TAILSCALE_AUTH_KEY", "secrets.LINUX_DESKTOP_PASSWORD",
+              "bash linux/workspace.sh keepalive", "if: always()",
+              "tailscale/github-action@v4",
+          ):
+              assert required in text, required
+          for required in (
+              "127.0.0.1:13001:3001", "127.0.0.1:13000:3000",
+              "FILE__PASSWORD=/run/secrets/web_password",
+              "SELKIES_ENABLE_RESIZE=true",
+              "tailscale serve --bg --yes --tcp=6082",
+          ):
+              assert required in runtime, required
+          assert "tailscale funnel" not in runtime.lower()
+          assert "cloudflared" not in runtime.lower()
+          print("PASS: Linux workflow YAML, 20 desktop variants, secret use, loopback-only ports and cleanup")
+          PY

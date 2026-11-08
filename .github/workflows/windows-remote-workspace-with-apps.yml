@@ -2545,6 +2545,93 @@ jobs:
 
           Write-Host "✅ RDP port verified"
 
+      - name: 🔬 Verify noVNC HTTP, WebSocket and RFB
+        if: inputs.remote_access != 'rdp'
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $localPage = 'http://127.0.0.1:6081/vnc.html'
+          $localWS = 'ws://127.0.0.1:6081/websockify'
+          Write-Host 'Checking local HTTP page, WebSocket bridge and initial VNC/RFB handshake...'
+
+          $page = Invoke-WebRequest -Uri $localPage -UseBasicParsing -TimeoutSec 10
+          if ($page.StatusCode -ne 200 -or $page.Content -notmatch 'noVNC') {
+            throw 'noVNC backend HTTP page failed its health check.'
+          }
+          Write-Host '✅ Local noVNC HTTP page: 200 OK'
+
+          function Test-RfbWebSocket {
+            param([Parameter(Mandatory=$true)][string]$WsUrl)
+            $ws = [System.Net.WebSockets.ClientWebSocket]::new()
+            $timeout = [System.Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(12))
+            try {
+              $ws.Options.AddSubProtocol('binary')
+              $ws.ConnectAsync([uri]$WsUrl,$timeout.Token).GetAwaiter().GetResult()
+              if ($ws.State -ne [System.Net.WebSockets.WebSocketState]::Open) {
+                throw "WebSocket state: $($ws.State)"
+              }
+              $buffer = [byte[]]::new(64)
+              $segment = [ArraySegment[byte]]::new($buffer)
+              $message = $ws.ReceiveAsync($segment,$timeout.Token).GetAwaiter().GetResult()
+              if ($message.MessageType -ne [System.Net.WebSockets.WebSocketMessageType]::Binary) {
+                throw "Expected binary VNC protocol, received $($message.MessageType)"
+              }
+              $banner = [Text.Encoding]::ASCII.GetString($buffer,0,$message.Count)
+              if ($banner -notmatch '^RFB [0-9]{3}\.[0-9]{3}') {
+                throw 'VNC/RFB protocol banner was not received through WebSocket.'
+              }
+              Write-Host "✅ WebSocket handshake succeeded and VNC server replied with: $($banner.Trim())"
+              return $true
+            } catch {
+              Write-Warning "WebSocket/RFB check failed at $($WsUrl): $($_.Exception.Message)"
+              return $false
+            } finally {
+              $ws.Dispose()
+              $timeout.Dispose()
+            }
+          }
+
+          if (-not (Test-RfbWebSocket -WsUrl $localWS)) {
+            throw 'noVNC backend serves HTML but its WebSocket bridge to TightVNC is not functional; remote cannot be considered ready.'
+          }
+          Write-Host '✅ Local HTTP, WebSocket and TightVNC/RFB protocol all healthy.'
+
+          # This check is performed ON the runner, not on another tailnet peer.
+          # Self-tests do not establish external reachability or browser trust.
+          $remoteUrl = [string]$env:NOVNC_URL
+          if ([string]::IsNullOrWhiteSpace($remoteUrl)) {
+            throw 'NOVNC_URL was not published by the Serve configuration step.'
+          }
+          $selfHttp = 'UNVERIFIED'
+          $selfWs = 'UNVERIFIED'
+          try {
+            $remotePage = Invoke-WebRequest -Uri $remoteUrl -UseBasicParsing -TimeoutSec 8
+            if ($remotePage.StatusCode -eq 200 -and $remotePage.Content -match 'noVNC') {
+              $selfHttp = 'PASS'
+              Write-Host "✅ Tailscale Serve self-probe HTTP 200: $remoteUrl"
+              $u = [Uri]$remoteUrl
+              $scheme = if ($u.Scheme -eq 'https') { 'wss' } else { 'ws' }
+              $remoteWsUrl = $scheme + '://' + $u.Authority + '/websockify'
+              if (Test-RfbWebSocket -WsUrl $remoteWsUrl) { $selfWs = 'PASS' }
+              else { $selfWs = 'FAIL' }
+            } else {
+              $selfHttp = "HTTP_$($remotePage.StatusCode)"
+            }
+          } catch {
+            $selfHttp = 'FAIL'
+            Write-Warning "Tailscale URL self-probe could not fetch the noVNC page: $($_.Exception.Message)"
+          }
+          "NOVNC_LOCAL_HTTP_STATUS=PASS" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          "NOVNC_LOCAL_WS_STATUS=PASS" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          "NOVNC_SERVE_SELF_HTTP_STATUS=$selfHttp" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          "NOVNC_SERVE_SELF_WS_STATUS=$selfWs" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          if ($selfHttp -ne 'PASS' -or $selfWs -ne 'PASS') {
+            Write-Warning 'noVNC backend is healthy, but the Tailscale Serve URL self-test did not fully pass. Check Serve mapping/port and client tailnet ACL.'
+          } else {
+            Write-Host '✅ Tailscale Serve HTTP and WebSocket self-probes passed. External client/browser access remains unverified.'
+          }
+
       - name: 📊 Generate Dashboard Summary
         shell: pwsh
         run: |
@@ -2795,7 +2882,11 @@ jobs:
             $summaryLines.Add("| Selected transport | $env:NOVNC_TRANSPORT |") | Out-Null
             $summaryLines.Add("| Externally reachable ports | TCP Serve: 6082 OR HTTPS Serve: 443; never both for the same run |") | Out-Null
             $summaryLines.Add("| Local-only ports (not published) | TightVNC 5900; websockify 6081 |") | Out-Null
-            $summaryLines.Add("| Verification | Local backend and Serve mapping checked; remote browser access still needs testing |") | Out-Null
+            $summaryLines.Add("| noVNC localhost HTTP | $env:NOVNC_LOCAL_HTTP_STATUS |") | Out-Null
+            $summaryLines.Add("| noVNC localhost WebSocket / VNC-RFB | $env:NOVNC_LOCAL_WS_STATUS |") | Out-Null
+            $summaryLines.Add("| Tailscale Serve self-probe HTTP | $env:NOVNC_SERVE_SELF_HTTP_STATUS |") | Out-Null
+            $summaryLines.Add("| Tailscale Serve self-probe WebSocket / VNC-RFB | $env:NOVNC_SERVE_SELF_WS_STATUS |") | Out-Null
+            $summaryLines.Add("| External client reachability | NOT VERIFIED from runner; test HTTP and WebSocket from a second Tailscale device |") | Out-Null
             $vncLoginHelp = if ($vncPasswordMode -eq 'random_each_run') { 'Generated password in the noVNC installation step log (public repo logs are public)' } else { 'GitHub Secret VNC_PASSWORD (first 8 bytes effective)' }
             $summaryLines.Add("| noVNC password mode | $vncPasswordMode |") | Out-Null
             $summaryLines.Add("| Browser VNC password | $vncLoginHelp |") | Out-Null
@@ -2915,6 +3006,8 @@ jobs:
           if ($remoteMode -in @('novnc','both')) {
             Write-Host "║  noVNC    : $env:NOVNC_URL"
             Write-Host "║  Protocol : $env:NOVNC_TRANSPORT"
+            Write-Host "║  Local WS : $env:NOVNC_LOCAL_WS_STATUS"
+            Write-Host "║  Serve WS : $env:NOVNC_SERVE_SELF_WS_STATUS"
             $vncHint = if ($vncPasswordMode -eq 'same_from_secret') { 'secret VNC_PASSWORD' } else { 'generated; see noVNC step log' }
             Write-Host "║  VNC pass : $vncHint"
           }

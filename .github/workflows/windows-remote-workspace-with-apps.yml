@@ -2838,86 +2838,122 @@ jobs:
             Write-Host '✅ Tailscale Serve HTTP and WebSocket self-probes passed. External client/browser access remains unverified.'
           }
 
-      - name: 🖥️ Prefer widescreen resolution for noVNC desktop
+      - name: 🖥️ Configure widescreen in interactive Windows session
         if: inputs.remote_access != 'rdp'
-        shell: pwsh
+        timeout-minutes: 2
         continue-on-error: true
-        timeout-minutes: 1
+        shell: pwsh
         run: |
-          # noVNC resize=scale fits the image within the browser, but cannot
-          # alter native monitor aspect ratio when TightVNC lacks SetDesktopSize.
-          # Prefer a 16:9 desktop mode ONLY if the current driver advertises it.
-          $resolutionStatus = 'unchanged'
+          # GitHub Actions cannot query an active display in its own session.
+          # Register a task in the actual interactive account at logon, and
+          # start immediately if a console account is already logged in.
+          $dir = Join-Path $env:ProgramData 'RDP-Setup'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $script = Join-Path $dir 'set-interactive-widescreen.ps1'
+          @'
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:ProgramData 'RDP-Setup\wfs-display-resolution.log'
+          function Say([string]$value) {
+            Add-Content -LiteralPath $log -Value ("[$(Get-Date -Format o)] $env:USERNAME/session=$([Diagnostics.Process]::GetCurrentProcess().SessionId): $value") -Encoding UTF8
+          }
           try {
-            Add-Type -TypeDefinition @'
+            if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) {
+              Say 'Skipped noninteractive Session 0.'
+              exit 0
+            }
+            Add-Type -TypeDefinition @"
           using System;
           using System.Runtime.InteropServices;
           [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-          public struct WfsDevMode {
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+          public struct WfsDevModeInteractive {
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string dmDeviceName;
             public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
-            public int dmFields;
-            public int dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+            public int dmFields, dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
             public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string dmFormName;
             public short dmLogPixels;
             public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
             public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType;
             public int dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
           }
-          public static class WfsDisplayMode {
+          public static class WfsNativeDisplay {
             [DllImport("user32.dll", EntryPoint="EnumDisplaySettingsW", CharSet=CharSet.Unicode)]
-            public static extern bool EnumDisplaySettings(string deviceName, int modeNumber, ref WfsDevMode mode);
+            public static extern bool EnumDisplaySettings(string device, int index, ref WfsDevModeInteractive mode);
             [DllImport("user32.dll", EntryPoint="ChangeDisplaySettingsW", CharSet=CharSet.Unicode)]
-            public static extern int ChangeDisplaySettings(ref WfsDevMode mode, int flags);
+            public static extern int ChangeDisplaySettings(ref WfsDevModeInteractive mode, int flags);
           }
-          '@
-            $modeSize = [Runtime.InteropServices.Marshal]::SizeOf([type][WfsDevMode])
-            $current = [WfsDevMode]::new()
-            $current.dmSize = [int16]$modeSize
-            if (-not [WfsDisplayMode]::EnumDisplaySettings($null,-1,[ref]$current)) {
-              throw 'The runner display driver does not expose a current display mode.'
+          "@
+            $size = [int16][Runtime.InteropServices.Marshal]::SizeOf([type][WfsDevModeInteractive])
+            $current = [WfsDevModeInteractive]::new()
+            $current.dmSize = $size
+            if (-not [WfsNativeDisplay]::EnumDisplaySettings($null,-1,[ref]$current)) {
+              Say 'No active display adapter in this interactive session. Keeping original resolution.'
+              exit 0
             }
-            Write-Host "Current console display: $($current.dmPelsWidth)x$($current.dmPelsHeight) / $($current.dmBitsPerPel)bpp"
-            $available = @()
-            for ($i=0; $i -lt 180; $i++) {
-              $mode = [WfsDevMode]::new()
-              $mode.dmSize = [int16]$modeSize
-              if (-not [WfsDisplayMode]::EnumDisplaySettings($null,$i,[ref]$mode)) { break }
-              if ($mode.dmPelsWidth -gt 0 -and $mode.dmPelsHeight -gt 0) {
-                $available += [pscustomobject]@{ Mode = $mode; Key = "$($mode.dmPelsWidth)x$($mode.dmPelsHeight)"; Depth = $mode.dmBitsPerPel }
-              }
+            Say "Current resolution: $($current.dmPelsWidth)x$($current.dmPelsHeight)"
+            $modes = @()
+            for ($i=0; $i -lt 256; $i++) {
+              $mode = [WfsDevModeInteractive]::new()
+              $mode.dmSize = $size
+              if (-not [WfsNativeDisplay]::EnumDisplaySettings($null,$i,[ref]$mode)) { break }
+              if ($mode.dmBitsPerPel -ge 24) { $modes += $mode }
             }
-            $switched = $false
             foreach ($target in @('1920x1080','1600x900','1366x768','1280x720')) {
-              $option = $available | Where-Object { $_.Key -eq $target -and $_.Depth -ge 24 } | Select-Object -First 1
-              if (-not $option) { continue }
-              $selected = $option.Mode
-              if ($current.dmPelsWidth -eq $selected.dmPelsWidth -and $current.dmPelsHeight -eq $selected.dmPelsHeight) {
-                $resolutionStatus = $target + ' (already active)'
-                $switched = $true
-                break
+              $mode = $modes | Where-Object { "$($_.dmPelsWidth)x$($_.dmPelsHeight)" -eq $target } | Select-Object -First 1
+              if (-not $mode) { continue }
+              if ("$($current.dmPelsWidth)x$($current.dmPelsHeight)" -eq $target) {
+                Say "Preferred resolution already active: $target"
+                exit 0
               }
-              if ([WfsDisplayMode]::ChangeDisplaySettings([ref]$selected,2) -ne 0) { continue }
-              $result = [WfsDisplayMode]::ChangeDisplaySettings([ref]$selected,0)
-              if ($result -eq 0) {
-                $resolutionStatus = $target + ' (applied)'
-                Write-Host "16:9 console resolution selected: $target"
-                $switched = $true
-                break
+              if ([WfsNativeDisplay]::ChangeDisplaySettings([ref]$mode,2) -ne 0) { continue }
+              $code = [WfsNativeDisplay]::ChangeDisplaySettings([ref]$mode,0)
+              if ($code -eq 0) {
+                Say "Set desktop resolution to $target"
+                exit 0
               }
-              Write-Warning "Windows display driver rejected $target (code $result)."
+              Say "Driver rejected $target (code $code)"
             }
-            if (-not $switched) {
-              $resolutionStatus = "$($current.dmPelsWidth)x$($current.dmPelsHeight) (no supported widescreen mode)"
-              Write-Warning "Cannot set 16:9 display; noVNC will scale the available console resolution while preserving aspect ratio."
-            }
+            Say 'No compatible 16:9 display mode; retaining original mode and using noVNC local scaling.'
           } catch {
-            $resolutionStatus = 'unchanged (display adapter unavailable or mode switch failed)'
-            Write-Warning "Optional widescreen selection skipped: $($_.Exception.Message)"
+            Say "Optional resolution adjustment failed: $($_.Exception.Message)"
           }
-          "NOVNC_RESOLUTION_STATUS=$resolutionStatus" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          Write-Host "Desktop display status: $resolutionStatus"
+          '@ | Set-Content -LiteralPath $script -Encoding UTF8
+          $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$script+'"')
+          function Register-DisplayTask([string]$taskName,[string]$user,[bool]$startNow) {
+            try {
+              if ([string]::IsNullOrWhiteSpace($user) -or $user -match '^(NT AUTHORITY|NT SERVICE)\\') { return $false }
+              $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
+              $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+              Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Trigger $trigger -Force -ErrorAction Stop | Out-Null
+              Write-Host "Registered interactive display task $taskName for $user"
+              if ($startNow) {
+                try {
+                  Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
+                  Write-Host "Started console display resolution task for $user"
+                } catch {
+                  Write-Warning "Interactive task is deferred until logon: $($_.Exception.Message)"
+                }
+              }
+              return $true
+            } catch {
+              Write-Warning "Display task registration failed for $($user): $($_.Exception.Message)"
+              return $false
+            }
+          }
+          $rdpUser = "$env:COMPUTERNAME\$env:RDP_USER"
+          $rdpTaskReady = Register-DisplayTask 'WFS-Widescreen-RDP-Logon' $rdpUser $false
+          $consoleUser = ''
+          try { $consoleUser = [string](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName } catch {}
+          $consoleTaskReady = $false
+          if ($consoleUser -and $consoleUser -ine $rdpUser) {
+            $consoleTaskReady = Register-DisplayTask 'WFS-Widescreen-Console-Logon' $consoleUser $true
+          }
+          $status = if ($consoleTaskReady) { 'Interactive console task started (check ProgramData RDP-Setup display log)' }
+                    elseif ($rdpTaskReady) { 'Interactive user task registered for next RDP logon' }
+                    else { 'No interactive session task registered; noVNC local scaling only' }
+          "NOVNC_RESOLUTION_STATUS=$status" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          Write-Host "Resolution adaptation: $status"
+          Write-Host 'Browser auto-fit uses resize=scale. Native resolution requires a logged-in Windows user and a supported display driver.'
 
       - name: 📊 Generate Dashboard Summary
         shell: pwsh

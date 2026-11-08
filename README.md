@@ -18,22 +18,29 @@
 
 ---
 
-## 🐧 Linux Remote Workspace — 20 pilihan desktop
+## 🐧 Linux Remote Workspace — RDP / noVNC / Both
 
-Workflow Linux kini tersedia **terpisah dari workflow Windows**, menggunakan LinuxServer.io Webtop / Selkies dan Tailscale. Distro dipilih melalui GitHub Actions: **Debian, Ubuntu, Fedora, Arch Linux, atau Alpine Linux**, dengan UI **Xfce, MATE, KDE Plasma, atau i3**. Default **Debian Xfce** ringan dan praktis; KDE lebih kaya fitur, i3 paling minimal.
+Workflow Linux berjalan **terpisah** dari Windows, tetap memakai Tailscale, GitHub Actions Keep Alive, dan aplikasi pilihan. Distro adalah container pada host Ubuntu 24.04. Pilihan **Debian, Ubuntu, Fedora, Arch, Alpine** dikombinasikan dengan desktop **Xfce, MATE, KDE, i3** (20 kombinasi GUI browser).
 
-| Fitur | Linux Remote Workspace |
-|:--|:--|
-| **Browser GUI** | HTTPS privat via Tailscale (Selkies; auto-resize mengikuti browser) |
-| **Distro** | 5 pilihan × 4 desktop = **20 kombinasi** |
-| **Aplikasi opsional** | Developer / Office / Media / semua, ArtCraft Launcher Linux terbaru |
-| **Keamanan** | Password desktop di GitHub Secret `LINUX_DESKTOP_PASSWORD`, port Docker hanya `127.0.0.1` |
-| **Durasi** | 1, 3 atau 6 jam; batas total job GitHub Actions 6 jam |
-| **Host** | Runner Ubuntu 24.04; distro pilihan berjalan sebagai container |
+| Perbandingan | 🪟 Windows | 🐧 Linux |
+|:--|:--|:--|
+| Jenis remote | RDP / noVNC / Both | **RDP / noVNC (Selkies web) / Both** |
+| RDP | Windows Remote Desktop | xrdp, port 3389 melalui Tailscale |
+| Browser | TightVNC + noVNC | Webtop Selkies, HTTPS 443 atau TLS/TCP 6082 |
+| Password RDP | Secret `RDP_PASSWORD` | **Secret yang sama** |
+| Password browser | Secret `VNC_PASSWORD` | **Secret yang sama** |
+| Password mode | Secret tetap / acak per run | Secret tetap / acak per run, **tidak dicetak di log publik** |
+| Nama runner | Hostname + mode tetap/unik | Hostname + mode tetap/unik |
+| Nama akun RDP | RDP | Dapat diubah (default `wfsrdp`) |
+| Nama login browser | Password VNC | Dapat diubah (default `wfs`) |
+| Durasi | 1 / 3 / 6 jam | 1 / 3 / 6 jam; job maksimal 360 menit |
+| Aplikasi | IDE, editor, MetaTrader, router, agent, ArtCraft | **Menu kategori sama**; instalasi hanya bila kompatibel |
 
-[**▶ Jalankan Linux Remote Workspace**](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml) · [**Baca panduan lengkap Linux**](linux/README.md)
+**Aplikasi Linux:** pilihan VS Code/Antigravity, CapCut/Shotcut, MT4/MT5, 9Router/OmniRoute, Codex/Claude, Hermes/OpenClaw/OpenCode, ArtCraft, serta paket Developer/Office/Media. Installer mengeluarkan status **INSTALLED**, **FAILED**, **MANUAL**, atau **UNSUPPORTED** per aplikasi. CapCut native Linux dan MetaTrader native bukan instalasi Linux resmi yang dapat dianggap berhasil otomatis; lihat Summary.
 
-> **Persiapan:** Secret `TAILSCALE_AUTH_KEY` yang sudah dipakai Windows dapat digunakan ulang. Tambahkan juga `LINUX_DESKTOP_PASSWORD` (minimal 12 karakter). Untuk mode fallback port 6082, browser mungkin menampilkan peringatan sertifikat Webtop self-signed; mode HTTPS Tailscale port 443 memerlukan konfigurasi sertifikat pada tailnet.
+**Perhatian:** mode noVNC pada Linux adalah **Selkies Webtop**, bukan server VNC klasik. RDP menggunakan sesi Xorg/Xfce terpisah, sehingga **RDP dan browser tidak otomatis menampilkan satu layar yang sama**. Arch Linux xrdp tidak tersedia dari repositori resmi yang dipakai script; gunakan `novnc` di Arch. Fitur xrdp distro lain masih memerlukan pengujian runtime.
+
+[**▶ Jalankan Linux Remote Workspace**](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml) · [**Panduan lengkap Linux, password per run, dan daftar app**](linux/README.md)
 
 ---
 

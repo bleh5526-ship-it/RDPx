@@ -2730,6 +2730,87 @@ jobs:
             Write-Host '✅ Tailscale Serve HTTP and WebSocket self-probes passed. External client/browser access remains unverified.'
           }
 
+      - name: 🖥️ Prefer widescreen resolution for noVNC desktop
+        if: inputs.remote_access != 'rdp'
+        shell: pwsh
+        continue-on-error: true
+        timeout-minutes: 1
+        run: |
+          # noVNC resize=scale fits the image within the browser, but cannot
+          # alter native monitor aspect ratio when TightVNC lacks SetDesktopSize.
+          # Prefer a 16:9 desktop mode ONLY if the current driver advertises it.
+          $resolutionStatus = 'unchanged'
+          try {
+            Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+          public struct WfsDevMode {
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+            public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
+            public int dmFields;
+            public int dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+            public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+            public short dmLogPixels;
+            public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+            public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType;
+            public int dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
+          }
+          public static class WfsDisplayMode {
+            [DllImport("user32.dll", EntryPoint="EnumDisplaySettingsW", CharSet=CharSet.Unicode)]
+            public static extern bool EnumDisplaySettings(string deviceName, int modeNumber, ref WfsDevMode mode);
+            [DllImport("user32.dll", EntryPoint="ChangeDisplaySettingsW", CharSet=CharSet.Unicode)]
+            public static extern int ChangeDisplaySettings(ref WfsDevMode mode, int flags);
+          }
+          '@
+            $modeSize = [Runtime.InteropServices.Marshal]::SizeOf([type][WfsDevMode])
+            $current = [WfsDevMode]::new()
+            $current.dmSize = [int16]$modeSize
+            if (-not [WfsDisplayMode]::EnumDisplaySettings($null,-1,[ref]$current)) {
+              throw 'The runner display driver does not expose a current display mode.'
+            }
+            Write-Host "Current console display: $($current.dmPelsWidth)x$($current.dmPelsHeight) / $($current.dmBitsPerPel)bpp"
+            $available = @()
+            for ($i=0; $i -lt 180; $i++) {
+              $mode = [WfsDevMode]::new()
+              $mode.dmSize = [int16]$modeSize
+              if (-not [WfsDisplayMode]::EnumDisplaySettings($null,$i,[ref]$mode)) { break }
+              if ($mode.dmPelsWidth -gt 0 -and $mode.dmPelsHeight -gt 0) {
+                $available += [pscustomobject]@{ Mode = $mode; Key = "$($mode.dmPelsWidth)x$($mode.dmPelsHeight)"; Depth = $mode.dmBitsPerPel }
+              }
+            }
+            $switched = $false
+            foreach ($target in @('1920x1080','1600x900','1366x768','1280x720')) {
+              $option = $available | Where-Object { $_.Key -eq $target -and $_.Depth -ge 24 } | Select-Object -First 1
+              if (-not $option) { continue }
+              $selected = $option.Mode
+              if ($current.dmPelsWidth -eq $selected.dmPelsWidth -and $current.dmPelsHeight -eq $selected.dmPelsHeight) {
+                $resolutionStatus = $target + ' (already active)'
+                $switched = $true
+                break
+              }
+              if ([WfsDisplayMode]::ChangeDisplaySettings([ref]$selected,2) -ne 0) { continue }
+              $result = [WfsDisplayMode]::ChangeDisplaySettings([ref]$selected,0)
+              if ($result -eq 0) {
+                $resolutionStatus = $target + ' (applied)'
+                Write-Host "16:9 console resolution selected: $target"
+                $switched = $true
+                break
+              }
+              Write-Warning "Windows display driver rejected $target (code $result)."
+            }
+            if (-not $switched) {
+              $resolutionStatus = "$($current.dmPelsWidth)x$($current.dmPelsHeight) (no supported widescreen mode)"
+              Write-Warning "Cannot set 16:9 display; noVNC will scale the available console resolution while preserving aspect ratio."
+            }
+          } catch {
+            $resolutionStatus = 'unchanged (display adapter unavailable or mode switch failed)'
+            Write-Warning "Optional widescreen selection skipped: $($_.Exception.Message)"
+          }
+          "NOVNC_RESOLUTION_STATUS=$resolutionStatus" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          Write-Host "Desktop display status: $resolutionStatus"
+
       - name: 📊 Generate Dashboard Summary
         shell: pwsh
         run: |
@@ -2989,6 +3070,7 @@ jobs:
             $summaryLines.Add("| noVNC password mode | $vncPasswordMode |") | Out-Null
             $summaryLines.Add("| Browser VNC password | $vncLoginHelp |") | Out-Null
             $summaryLines.Add("| Display scaling | Automatic local scaling (resize=scale). noVNC connects automatically; VNC password may still be requested. |") | Out-Null
+            $summaryLines.Add("| Windows console resolution | $env:NOVNC_RESOLUTION_STATUS |") | Out-Null
             $summaryLines.Add("| Browser fullscreen | Click noVNC Full screen or press F11; browsers require a user interaction |") | Out-Null
             $summaryLines.Add("| Desktop background | Attempts Windows stock wallpaper if unset. Console account/theme can still show a dark background; set wallpaper in Windows Personalization if needed |") | Out-Null
             $summaryLines.Add("| Visible desktop | Windows console (not necessarily the separate RDP user desktop) |") | Out-Null

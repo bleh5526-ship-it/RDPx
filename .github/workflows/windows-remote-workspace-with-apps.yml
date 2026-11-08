@@ -2530,10 +2530,66 @@ jobs:
             Write-Warning "Optional Tailscale Serve setup skipped: $($_.Exception.Message)"
           }
 
-          Write-Host '[noVNC 5/5] Publishing URL details; optional Serve attempt finished.'
-          $preferredUrl = if ($httpsUrl) { $httpsUrl } else { $directUrl }
+          # Prefer a tailnet-native TCP proxy when available. Unlike raw
+          # Windows port 6080, this proxy is handled by Tailscale itself,
+          # requires no public listener and does not require HTTPS certificates.
+          $serveTcpUrl = $null
+          $serveTcpStatus = 'not attempted'
+          if ($localReady -and (Test-Path $tsExe)) {
+            Write-Host '[noVNC 4b/5] Configuring private Tailscale TCP forwarding on port 6082...'
+            try {
+              $tcpOut = Join-Path $base 'tailscale-tcp-serve.out.log'
+              $tcpErr = Join-Path $base 'tailscale-tcp-serve.err.log'
+              $tcpProcess = Start-Process -FilePath $tsExe -ArgumentList @('serve','--bg','--yes','--tcp=6082','tcp://127.0.0.1:6081') -WindowStyle Hidden -PassThru -RedirectStandardOutput $tcpOut -RedirectStandardError $tcpErr
+              if (-not $tcpProcess.WaitForExit(15000)) {
+                try { $tcpProcess.Kill($true) } catch { Stop-Process -Id $tcpProcess.Id -Force -ErrorAction SilentlyContinue }
+                $serveTcpStatus = 'timeout'
+                Write-Warning 'Tailscale TCP Serve timed out after 15 seconds; direct noVNC remains available.'
+              } elseif ($tcpProcess.ExitCode -ne 0) {
+                $serveTcpStatus = "exit code $($tcpProcess.ExitCode)"
+                Write-Warning "Tailscale TCP Serve failed: $serveTcpStatus"
+                if (Test-Path $tcpErr) { Get-Content -LiteralPath $tcpErr -Tail 10 | Out-Host }
+              } else {
+                $tcpStatusOut = Join-Path $base 'tailscale-tcp-status.out.log'
+                $tcpStatusErr = Join-Path $base 'tailscale-tcp-status.err.log'
+                $tcpStatusProcess = Start-Process -FilePath $tsExe -ArgumentList @('serve','status') -WindowStyle Hidden -PassThru -RedirectStandardOutput $tcpStatusOut -RedirectStandardError $tcpStatusErr
+                if (-not $tcpStatusProcess.WaitForExit(10000)) {
+                  try { $tcpStatusProcess.Kill($true) } catch { Stop-Process -Id $tcpStatusProcess.Id -Force -ErrorAction SilentlyContinue }
+                  $serveTcpStatus = 'status timed out'
+                  Write-Warning 'Tailscale TCP forwarding configured but status verification timed out.'
+                } elseif ($tcpStatusProcess.ExitCode -eq 0) {
+                  $tcpStatusText = Get-Content -LiteralPath $tcpStatusOut -Raw -ErrorAction SilentlyContinue
+                  if ($tcpStatusText -match '6082' -and $tcpStatusText -match '127\.0\.0\.1:6081') {
+                    $serveTcpUrl = "http://$($env:TAILSCALE_IP):6082/vnc.html"
+                    $serveTcpStatus = 'configured (remote peer access not yet verified)'
+                    Write-Host "✅ Tailscale TCP Serve ready: $serveTcpUrl"
+                  } else {
+                    $serveTcpStatus = 'status mapping not confirmed'
+                    Write-Warning 'TCP Serve status did not contain the expected 6082 -> 127.0.0.1:6081 mapping.'
+                    Write-Host ([string]$tcpStatusText)
+                  }
+                } else {
+                  $serveTcpStatus = "status exit code $($tcpStatusProcess.ExitCode)"
+                  Write-Warning "TCP Serve status could not be verified: $serveTcpStatus"
+                }
+              }
+            } catch {
+              $serveTcpStatus = 'setup failed'
+              Write-Warning "Optional Tailscale TCP forwarding unavailable: $($_.Exception.Message)"
+            }
+          } else {
+            $serveTcpStatus = 'local websockify/Tailscale prerequisites missing'
+            Write-Warning 'Tailscale TCP forwarding skipped because localhost backend or Tailscale is unavailable.'
+          }
+
+          Write-Host '[noVNC 5/5] Publishing verified local endpoints and private tailnet URLs.'
+          $preferredUrl = if ($httpsUrl) { $httpsUrl } elseif ($serveTcpUrl) { $serveTcpUrl } else { $directUrl }
           "NOVNC_URL=$preferredUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           "NOVNC_DIRECT_URL=$directUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          "NOVNC_TCP_SERVE_STATUS=$serveTcpStatus" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          if ($serveTcpUrl) {
+            "NOVNC_TCP_SERVE_URL=$serveTcpUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          }
           if ($httpsUrl) {
             "NOVNC_HTTPS_URL=$httpsUrl" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           }
@@ -2551,6 +2607,8 @@ jobs:
 
           Write-Host "🌐 noVNC preferred URL: $preferredUrl"
           Write-Host "🌐 noVNC direct fallback (HTTP, within Tailscale only): $directUrl"
+          Write-Host "🛡️ noVNC tailnet-native TCP Serve status: $serveTcpStatus"
+          if ($serveTcpUrl) { Write-Host "🌐 noVNC tailnet-native TCP URL: $serveTcpUrl" }
           if (-not $httpsUrl) {
             Write-Warning 'HTTPS URL not available. Try the HTTP direct URL (not https://), and check Tailscale device ACLs/grants if it times out.'
           }
@@ -2826,7 +2884,11 @@ jobs:
             $summaryLines.Add("| noVNC browser access | Value |") | Out-Null
             $summaryLines.Add("|---|---|") | Out-Null
             $summaryLines.Add("| noVNC preferred URL | [$env:NOVNC_URL]($env:NOVNC_URL) |") | Out-Null
-            $summaryLines.Add("| noVNC direct HTTP fallback | [$env:NOVNC_DIRECT_URL]($env:NOVNC_DIRECT_URL) |") | Out-Null
+            if ($env:NOVNC_TCP_SERVE_URL) {
+              $summaryLines.Add("| noVNC Tailscale TCP Serve (port 6082) | [$env:NOVNC_TCP_SERVE_URL]($env:NOVNC_TCP_SERVE_URL) |") | Out-Null
+            }
+            $summaryLines.Add("| Tailscale TCP Serve status | $env:NOVNC_TCP_SERVE_STATUS |") | Out-Null
+            $summaryLines.Add("| noVNC direct HTTP fallback (port 6080) | [$env:NOVNC_DIRECT_URL]($env:NOVNC_DIRECT_URL) |") | Out-Null
             if ($env:NOVNC_HTTPS_URL) {
               $summaryLines.Add("| Tailscale Serve HTTPS | [$env:NOVNC_HTTPS_URL]($env:NOVNC_HTTPS_URL) |") | Out-Null
             } else {
@@ -2892,7 +2954,8 @@ jobs:
           $summaryLines.Add("| RDP timeout | Pastikan device lokal sudah connect ke Tailscale dan berada di tailnet yang sama |") | Out-Null
           $summaryLines.Add("| MagicDNS belum resolve | Tunggu sebentar atau langsung pakai IP Tailscale |") | Out-Null
           if ($remoteMode -in @('novnc','both')) {
-            $summaryLines.Add("| noVNC tidak terbuka | Coba URL HTTPS Serve jika ada, atau HTTP (bukan HTTPS) pada IP Tailscale port 6080 |") | Out-Null
+            $summaryLines.Add("| noVNC tidak terbuka | Coba TCP Serve port 6082 jika ada, HTTPS Serve jika tersedia, atau direct HTTP port 6080. Jangan ganti http menjadi https pada port 6082/6080 |") | Out-Null
+            $summaryLines.Add("| Semua URL noVNC timeout | Periksa Tailscale ACL/grants untuk TCP port 6082/6080, target IP dari run yang aktif, dan status node online di Tailscale admin |") | Out-Null
             $summaryLines.Add("| Tailnet sama tetapi timeout | Dari komputer Anda jalankan tailscale ping ke hostname, lalu Test-NetConnection ke IP Tailscale port 6080; periksa ACL/grants tailnet |") | Out-Null
             $summaryLines.Add("| Server noVNC tidak tersedia | Pastikan run GitHub Actions masih aktif. Setelah runner berakhir, layanan dan IP sesi tidak dapat digunakan |") | Out-Null
             $summaryLines.Add("| noVNC password ditolak | Untuk mode tetap gunakan VNC_PASSWORD, untuk acak lihat log step noVNC. VNCAuth memakai 8 byte pertama. |") | Out-Null
@@ -2950,6 +3013,7 @@ jobs:
           if ($remoteMode -in @('novnc','both')) {
             Write-Host "║  noVNC    : $env:NOVNC_URL"
             Write-Host "║  Direct   : $env:NOVNC_DIRECT_URL"
+            if ($env:NOVNC_TCP_SERVE_URL) { Write-Host "║  TCP Serve: $env:NOVNC_TCP_SERVE_URL" }
             $vncHint = if ($vncPasswordMode -eq 'same_from_secret') { 'secret VNC_PASSWORD' } else { 'generated; see noVNC step log' }
             Write-Host "║  VNC pass : $vncHint"
           }

@@ -105,7 +105,7 @@ start() {
       die "Webtop container exited during startup."
     fi
     code=$(curl --insecure --silent --location --output /dev/null --write-out '%{http_code}' \
-      --max-time 5 --user "wfs:$(cat "$password_file")" https://127.0.0.1:13001/ || true)
+      --max-time 5 --user "$WFS_WEB_USERNAME:$(cat "$password_file")" https://127.0.0.1:13001/ || true)
     if [ "$code" = 200 ]; then break; fi
     sleep 3
   done
@@ -119,10 +119,10 @@ probe() {
   for attempt in 1 2 3; do
     if [ "$trust" = selfsigned ]; then
       code=$(curl --insecure --silent --location --output /dev/null --write-out '%{http_code}' \
-        --connect-timeout 8 --max-time 15 --user "wfs:$(cat "$password_file")" "$url" || true)
+        --connect-timeout 8 --max-time 15 --user "$WFS_WEB_USERNAME:$(cat "$password_file")" "$url" || true)
     else
       code=$(curl --silent --location --output /dev/null --write-out '%{http_code}' \
-        --connect-timeout 8 --max-time 15 --user "wfs:$(cat "$password_file")" "$url" || true)
+        --connect-timeout 8 --max-time 15 --user "$WFS_WEB_USERNAME:$(cat "$password_file")" "$url" || true)
     fi
     [ "$code" = 200 ] && return 0
     sleep 3

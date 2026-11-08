@@ -35,16 +35,6 @@ run-name: "🚀 Windows Workspace • ${{ inputs.remote_access }} • ${{ inputs
           - "novnc"
           - "both"
 
-      duration_hours:
-        description: "Durasi RDP Aktif (Jam)"
-        required: true
-        default: "6"
-        type: choice
-        options:
-          - "1"
-          - "3"
-          - "6"
-
       ide_choice:
         description: "Pilih IDE yang akan diinstall"
         required: true
@@ -2648,6 +2638,9 @@ jobs:
           CLOUDFLARE_ALLOWED_EMAIL: ${{ secrets.CLOUDFLARE_ALLOWED_EMAIL }}
         run: |
           $ErrorActionPreference = 'Stop'
+          if ('${{ inputs.vnc_password_mode }}' -ne 'same_from_secret') {
+            throw 'Cloudflare Internet preview requires vnc_password_mode=same_from_secret. Random VNC passwords must not be printed in public Actions logs.'
+          }
           $allowedEmail = ([string]$env:CLOUDFLARE_ALLOWED_EMAIL).Trim()
           if ($allowedEmail -notmatch '^[^@\s,]+@[^@\s,]+\.[^@\s,]+$') {
             throw 'Set GitHub secret CLOUDFLARE_ALLOWED_EMAIL to one email address before enabling public Cloudflare preview.'
@@ -2707,7 +2700,6 @@ jobs:
           $passwordMode = '${{ inputs.rdp_password_mode }}'
           $vncPasswordMode = '${{ inputs.vnc_password_mode }}'
           $remoteMode = '${{ inputs.remote_access }}'
-          $durationHours = '${{ inputs.duration_hours }}'
           $windowsVersion = '${{ inputs.windows_version }}'
 
           function Test-AnyPath {

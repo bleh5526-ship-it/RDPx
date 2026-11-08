@@ -180,13 +180,44 @@ jobs:
           Write-Host " Optimizing Windows for RDP Performance"
           Write-Host "==========================================="
 
-          # Visual & animation tweaks
-          $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
-          Set-ItemProperty -Path $regPath -Name "VisualFXSetting" -Value 2 -Force -ErrorAction SilentlyContinue
-
+          # Do not force VisualFXSetting=2 (best performance). Some runner
+          # images/sessions intentionally use a plain black background, and
+          # this override is not needed for a usable noVNC desktop.
           $perf = "HKCU:\Control Panel\Desktop"
           Set-ItemProperty -Path $perf -Name "MenuShowDelay" -Value "0" -Force -ErrorAction SilentlyContinue
           Set-ItemProperty -Path $perf -Name "DragFullWindows" -Value "0" -Force -ErrorAction SilentlyContinue
+
+          # Use a built-in Windows wallpaper only if this runner account has
+          # no valid wallpaper selected. Do not download images, override
+          # existing personalization, or fail the remote workflow on errors.
+          try {
+            $wallpaperPath = [string](Get-ItemProperty -Path $perf -Name Wallpaper -ErrorAction SilentlyContinue).Wallpaper
+            if ([string]::IsNullOrWhiteSpace($wallpaperPath) -or -not (Test-Path -LiteralPath $wallpaperPath)) {
+              $wallpaperRoot = Join-Path $env:WINDIR 'Web\Wallpaper'
+              $stock = Get-ChildItem -Path $wallpaperRoot -Include *.jpg,*.jpeg,*.png -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+              if ($stock) {
+                Set-ItemProperty -Path $perf -Name Wallpaper -Value $stock -Force
+                Set-ItemProperty -Path $perf -Name WallpaperStyle -Value '10' -Force
+                Set-ItemProperty -Path $perf -Name TileWallpaper -Value '0' -Force
+                Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          internal static class WfsDesktopWallpaper {
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+            internal static extern bool SystemParametersInfo(uint action, uint param, string path, uint flags);
+          }
+          '@
+                $applied = [WfsDesktopWallpaper]::SystemParametersInfo(20,0,$stock,3)
+                Write-Host "Desktop wallpaper: Windows stock image configured (live refresh: $applied)."
+              } else {
+                Write-Host 'No built-in Windows wallpaper was found; preserve current background.'
+              }
+            } else {
+              Write-Host 'Existing desktop wallpaper retained.'
+            }
+          } catch {
+            Write-Warning "Optional desktop wallpaper setup was skipped: $($_.Exception.Message)"
+          }
 
           # High performance power plan
           powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
@@ -2433,6 +2464,18 @@ jobs:
           Move-Item -LiteralPath (Join-Path $base 'noVNC-1.7.0') -Destination $webRoot -Force
           Remove-Item -LiteralPath $archive -Force
           if (-not (Test-Path (Join-Path $webRoot 'vnc.html'))) { throw 'noVNC web frontend not found.' }
+          # noVNC official defaults: local scale responds to browser resizing
+          # without requesting an unsupported RFB desktop resolution change.
+          # Settings remain user-changeable from the noVNC toolbar.
+          $noVncDefaults = Join-Path $webRoot 'defaults.json'
+          @{ resize = 'scale'; autoconnect = $true } |
+            ConvertTo-Json -Compress |
+            Set-Content -LiteralPath $noVncDefaults -Encoding utf8
+          $confirmedDefaults = Get-Content -LiteralPath $noVncDefaults -Raw | ConvertFrom-Json
+          if ($confirmedDefaults.resize -ne 'scale' -or $confirmedDefaults.autoconnect -ne $true) {
+            throw 'noVNC responsive display defaults could not be confirmed.'
+          }
+          Write-Host 'noVNC display defaults: resize=scale, autoconnect=true.'
           $python = (Get-Command python.exe -ErrorAction Stop).Source
           # The server runs in a Windows Scheduled Task under SYSTEM. Its own
           # virtual environment avoids runneradmin-only Python site-packages.
@@ -2521,7 +2564,7 @@ jobs:
             if ($serveState -notmatch '6082' -or $serveState -notmatch '6081') {
               throw 'Tailscale TCP Serve did not confirm the 6082 to 127.0.0.1:6081 mapping.'
             }
-            $url = "http://$($env:TAILSCALE_IP):6082/vnc.html"
+            $url = "http://$($env:TAILSCALE_IP):6082/vnc.html#resize=scale&autoconnect=1"
             "NOVNC_TCP_SERVE_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           } elseif ($transport -eq 'tailscale_https') {
             Write-Host '[noVNC 4/5] Configuring HTTPS Serve on 443; tailnet HTTPS certificates must already be enabled.'
@@ -2536,7 +2579,7 @@ jobs:
             if ($serveState -notmatch 'https://' -or $serveState -notmatch '6081') {
               throw 'Tailscale HTTPS Serve did not confirm the HTTPS to 127.0.0.1:6081 mapping.'
             }
-            $url = "https://$fqdn/vnc.html"
+            $url = "https://$fqdn/vnc.html#resize=scale&autoconnect=1"
             "NOVNC_HTTPS_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           } else {
             throw "Invalid novnc_transport: $transport"
@@ -2545,7 +2588,9 @@ jobs:
           "NOVNC_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           "NOVNC_TRANSPORT=$transport" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           Write-Host '[noVNC 5/5] Private browser endpoint configured.'
-          Write-Host "✅ noVNC browser URL: $url"
+          Write-Host "✅ noVNC browser URL (auto-fit + auto-connect): $url"
+          Write-Host 'Fit-to-browser uses local scaling. True browser fullscreen requires a user click or F11; server-side fullscreen cannot be forced.'
+          Write-Host 'A black desktop background may still reflect the active Windows console user/session; use Windows Personalization after connecting if needed.'
           Write-Host 'VNC RFB listens locally at 127.0.0.1:5900; web backend locally at 127.0.0.1:6081.'
           Write-Host 'Only the selected Tailscale Serve port is exposed (6082 TCP OR 443 HTTPS).'
           Write-Host 'Remote browser reachability must still be confirmed from a separate tailnet device.'
@@ -2932,6 +2977,9 @@ jobs:
             $vncLoginHelp = if ($vncPasswordMode -eq 'random_each_run') { 'Generated password in the noVNC installation step log (public repo logs are public)' } else { 'GitHub Secret VNC_PASSWORD (first 8 bytes effective)' }
             $summaryLines.Add("| noVNC password mode | $vncPasswordMode |") | Out-Null
             $summaryLines.Add("| Browser VNC password | $vncLoginHelp |") | Out-Null
+            $summaryLines.Add("| Display scaling | Automatic local scaling (resize=scale). noVNC connects automatically; VNC password may still be requested. |") | Out-Null
+            $summaryLines.Add("| Browser fullscreen | Click noVNC Full screen or press F11; browsers require a user interaction |") | Out-Null
+            $summaryLines.Add("| Desktop background | Attempts Windows stock wallpaper if unset. Console account/theme can still show a dark background; set wallpaper in Windows Personalization if needed |") | Out-Null
             $summaryLines.Add("| Visible desktop | Windows console (not necessarily the separate RDP user desktop) |") | Out-Null
             $summaryLines.Add("") | Out-Null
           }

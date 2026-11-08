@@ -2,146 +2,217 @@
 
 # 🪟 WFS Windows Remote Workspace
 
-### Windows • RDP • noVNC • Tailscale • Cloudflare HTTPS
+### Remote Windows Desktop • RDP • noVNC • Tailscale
 
-**One workflow. Your temporary Windows development desktop.**
+**Satu GitHub Actions workflow untuk menyiapkan workspace Windows sementara, dengan akses privat dari PC atau browser.**
 
-[![Workflow](https://img.shields.io/github/actions/workflow/status/wawanwfs/RDP/windows-remote-workspace-with-apps.yml?branch=main&style=for-the-badge&logo=githubactions&label=Windows%20Workspace)](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml)
+[![Windows Workspace](https://img.shields.io/github/actions/workflow/status/wawanwfs/RDP/windows-remote-workspace-with-apps.yml?branch=main&style=for-the-badge&logo=githubactions&label=Windows%20Workspace)](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml)
 [![Windows](https://img.shields.io/badge/Windows-2022%20%7C%202025-0078D4?style=for-the-badge&logo=windows)](https://github.com/wawanwfs/RDP/actions)
-[![Cloudflare](https://img.shields.io/badge/Cloudflare-HTTPS%20Preview-F38020?style=for-the-badge&logo=cloudflare)](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
-[![Tailscale](https://img.shields.io/badge/Tailscale-Private%20Access-242424?style=for-the-badge)](https://tailscale.com/)
+[![Tailscale](https://img.shields.io/badge/Tailscale-Private%20Tailnet-242424?style=for-the-badge)](https://tailscale.com/)
+[![PowerShell](https://img.shields.io/badge/PowerShell-7-5391FE?style=for-the-badge&logo=powershell)](https://learn.microsoft.com/powershell/)
 
-[🚀 Run Workspace](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml) · [📊 Actions](https://github.com/wawanwfs/RDP/actions) · [🔐 Repository Secrets](https://github.com/wawanwfs/RDP/settings/secrets/actions)
+[**▶ Jalankan Workspace**](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml) · [Lihat Actions](https://github.com/wawanwfs/RDP/actions) · [Atur Repository Secrets](https://github.com/wawanwfs/RDP/settings/secrets/actions)
 
 </div>
 
 ---
 
-## ✨ Apa ini?
+## ✨ Ringkasan
 
-**WFS Windows Remote Workspace** menyiapkan desktop Windows sementara lewat GitHub Actions. Pilih aplikasi, lalu masuk menggunakan **RDP**, **noVNC di browser**, atau keduanya. Gunakan **Tailscale** untuk akses privat atau **Cloudflare Quick Tunnel HTTPS** untuk pengujian browser melalui internet dengan autentikasi email OTP.
+WFS Windows Remote Workspace menggunakan **GitHub-hosted Windows runner sementara** untuk menyiapkan desktop serta aplikasi pilihan Anda. Sambungkan perangkat ke tailnet yang sama menggunakan **Tailscale**, lalu akses melalui Microsoft Remote Desktop, browser noVNC, atau keduanya.
+
+| Fitur | Detail |
+|:--|:--|
+| 🖥️ Mode | `rdp`, `novnc`, atau `both` |
+| 🔐 Jaringan | Tailscale privat; **tidak ada Cloudflare Tunnel** |
+| 🌐 noVNC | Satu transport dipilih per run: TCP `6082` atau HTTPS `443` |
+| ⏳ Durasi | Pilihan `1`, `3`, atau `6` jam setelah setup, tetap tunduk pada batas job total `360` menit |
+| 🔎 Verifikasi | Pemeriksaan HTTP, WebSocket, dan handshake RFB/VNC |
+| 🧹 Penutupan | Logout Tailscale saat selesai, dengan penanganan cleanup best-effort |
 
 > [!IMPORTANT]
-> Ini **runner sementara**, bukan VPS permanen. **Maksimal 6 jam total per job** sejak proses dimulai (termasuk instalasi). Data runner dapat hilang setelah sesi berakhir.
+> **Ini bukan VPS/komputer permanen.** Runner dan isinya dapat hilang ketika Actions selesai, gagal, dibatalkan, atau mencapai batas platform. Simpan pekerjaan penting ke storage/repository terpisah. Status setup `success` belum membuktikan browser dari PC lain dapat terhubung.
 
-## 🧭 Arsitektur
+## 🧭 Arsitektur dan port
 
 ```text
-                        GitHub Actions Windows runner
-                                     │
-                             Windows desktop
-                           ┌─────────┴──────────┐
-                           │                    │
-                        RDP :3389         TightVNC :5900
-                           │               (localhost)
-                        Tailscale               │
-                           │             websockify :6081
-                           │               (localhost)
-                           │              ┌─────┴──────────────┐
-                           │              │                    │
-                           │       Tailscale Serve      Cloudflare Tunnel
-                           │       :6082 TCP OR         HTTPS *.trycloudflare.com
-                           │       :443 HTTPS           + email OTP
-                           └──────────────┴────────────────────┘
-                                      Browser / RDP client
+                         GitHub Actions • Windows runner
+                                       │
+                                Windows desktop
+                      ┌────────────────┴────────────────┐
+                      │                                 │
+                RDP (jika dipilih)               TightVNC Server
+                TCP 3389 / tailnet              127.0.0.1:5900
+                      │                                 │
+                      │                           websockify/noVNC
+                      │                           127.0.0.1:6081
+                      │                                 │
+                      │                      Tailscale Serve (pilih SATU)
+                      │                       ├─ TCP 6082 (HTTP)
+                      │                       └─ HTTPS 443 (*.ts.net)
+                      │                                 │
+                      └────────────────┬────────────────┘
+                                       │
+                             Perangkat di tailnet yang sama
 ```
 
-| Metode | Alamat | Persyaratan |
+| Port | Komponen | Visibilitas |
 |:--|:--|:--|
-| 🖥️ RDP | Hostname/IP Tailscale | Tailnet + password Windows |
-| 🌐 noVNC TCP | `http://IP-TAILSCALE:6082/vnc.html` | Tailnet, `tailscale_tcp` |
-| 🔒 noVNC HTTPS | `https://hostname.tailnet.ts.net/vnc.html` | Tailnet, HTTPS Serve enabled |
-| ☁️ Cloudflare HTTPS | `https://nama-acak.trycloudflare.com/vnc.html` | Email OTP + password VNC |
+| `3389/TCP` | Windows RDP | Hanya dibuka melalui firewall untuk IP tailnet saat mode `rdp`/`both` |
+| `5900/TCP` | TightVNC (RFB) | **Loopback lokal** |
+| `6081/TCP` | websockify / noVNC web UI | **Loopback lokal** |
+| `6082/TCP` | Tailscale Serve TCP | Pilihan default noVNC, hanya lewat tailnet |
+| `443/TCP` | Tailscale Serve HTTPS | Alternatif noVNC, membutuhkan HTTPS/sertifikat tailnet yang sudah tersedia |
+| `6080` | HTTP direct lama | **Tidak digunakan lagi** |
 
-**Port lokal 5900 dan 6081 tidak dibuka ke jaringan.** Pilih satu port Tailscale Serve per run: TCP 6082 atau HTTPS 443. Cloudflare Tunnel menggunakan koneksi keluar, bukan membuka port inbound.
+**Tidak perlu membuka port 5900/6081 ke internet atau membuat port forwarding router.** Untuk noVNC, workflow hanya mengonfigurasi **salah satu** dari `6082` atau `443` pada satu run. Server websockify dijalankan lewat Windows Scheduled Task agar tetap berjalan setelah langkah instalasi selesai.
 
-## 🚀 Mulai dari GitHub Actions
+## 🔐 Persiapan: Secrets
 
-1. Buka [Settings → Secrets and variables → Actions](https://github.com/wawanwfs/RDP/settings/secrets/actions) dan isi secret yang dibutuhkan: `TS_AUTHKEY` (Tailscale), `RDP_PASSWORD` (RDP tetap), `VNC_PASSWORD` (noVNC tetap), dan `CLOUDFLARE_ALLOWED_EMAIL` (**satu email** yang diizinkan mengakses preview Cloudflare).
-2. Buka [Windows Remote Workspace with Apps](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml), klik **Run workflow** dari branch `main`.
-3. Pilih `remote_access=novnc` untuk browser, `rdp` untuk Remote Desktop, atau `both`.
-4. Pilih `novnc_transport=tailscale_tcp` untuk port 6082, atau `tailscale_https` jika HTTPS/sertifikat tailnet sudah diaktifkan.
-5. Aktifkan `cloudflare_preview=true` bila ingin **link HTTPS yang dapat dibuka tanpa Tailscale**. Pastikan secret `CLOUDFLARE_ALLOWED_EMAIL` sudah terisi.
-6. Tunggu step **Verify noVNC HTTP, WebSocket and RFB**, **Cloudflare HTTPS Preview** (opsional), lalu **Remote READY – Keep Alive**. URL aktif ada di **Actions Summary**.
+Buka **[Settings → Secrets and variables → Actions](https://github.com/wawanwfs/RDP/settings/secrets/actions)**, lalu buat repository secrets sesuai mode:
 
-> [!CAUTION]
-> Cloudflare Quick Tunnel dapat dijangkau dari internet. Workflow mewajibkan **email OTP** sebelum mengizinkan akses ke desktop. Gunakan `vnc_password_mode=same_from_secret` ketika memakai Cloudflare: password acak yang dicetak di log publik tidak cocok untuk akses internet. Jangan pernah menulis password, token, atau secret di README atau screenshot.
+| Secret | Kapan dibutuhkan | Fungsi |
+|:--|:--|:--|
+| `TAILSCALE_AUTH_KEY` | **Selalu** | Menghubungkan Windows runner ke tailnet |
+| `RDP_PASSWORD` | Jika `rdp_password_mode=same_from_secret` (default) | Password akun Windows `RDP` |
+| `VNC_PASSWORD` | Jika noVNC digunakan dan `vnc_password_mode=same_from_secret` (default) | Password autentikasi VNC |
 
-## ☁️ Uji browser melalui Cloudflare HTTPS
+> [!WARNING]
+> Nama secret Tailscale yang **benar adalah `TAILSCALE_AUTH_KEY`**, bukan `TS_AUTHKEY`. Jangan tempelkan nilai secret ke README, issue, atau log yang dibagikan. Mode `random_each_run` untuk password VNC mencetak password di log Actions; **log repo publik dapat dibaca umum**. Gunakan secret tetap untuk penggunaan yang lebih aman. VNCAuth klasik hanya memakai **8 byte pertama** password.
 
-1. Set secret `CLOUDFLARE_ALLOWED_EMAIL` menjadi email pribadi Anda.
-2. Jalankan workflow dengan `remote_access=novnc` atau `both`, serta `cloudflare_preview=true`.
-3. Di **Actions Summary**, buka link `https://....trycloudflare.com/vnc.html`.
-4. Masukkan email yang diizinkan, kemudian **PIN sekali pakai** yang dikirim Cloudflare.
-5. Setelah halaman noVNC tampil, klik **Connect**, lalu masukkan password dari secret `VNC_PASSWORD`.
-6. Jika halaman terbuka tetapi Connect gagal, tekan `F12` → **Network → WS** untuk memeriksa WebSocket. Bandingkan dengan hasil **HTTP / WebSocket / VNC-RFB** di Summary.
+## 🚀 Menjalankan workflow
 
-**URL Cloudflare berubah setiap run** dan berhenti ketika tunnel/runner berhenti. Quick Tunnel hanya untuk pengujian, bukan produksi. Keberhasilan memperoleh URL tidak otomatis menjamin koneksi desktop berhasil.
+1. Instal/login **[Tailscale](https://tailscale.com/download)** pada PC Windows 10/11 Anda, pastikan berada pada tailnet yang sama dengan auth key runner.
+2. Buka **[Windows Remote Workspace with Apps](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml)** → **Run workflow** → pilih branch `main`.
+3. Pilih `windows_version` (disarankan `windows-2025`), lalu `remote_access`: `rdp`, `novnc`, atau `both`.
+4. Pilih `duration_hours`: `1`, `3`, atau `6` (default), serta aplikasi/IDE yang ingin dipasang.
+5. Untuk noVNC, pilih `novnc_transport=tailscale_tcp` (default). Pilih `tailscale_https` hanya jika HTTPS dan sertifikat Tailscale Serve sudah diaktifkan pada tailnet.
+6. Klik **Run workflow**, buka run tersebut, dan lihat **Summary** untuk hostname, IP, URL noVNC aktual, serta petunjuk password. Gunakan **URL dari run yang sedang aktif**, bukan URL sesi sebelumnya.
 
-## 🧪 Pengujian lokal Windows 10/11
+**Pilihan utama pada formulir Actions**
 
-Untuk menguji **halaman web noVNC** di komputer sendiri, tanpa GitHub Actions:
+| Input | Pilihan penting | Default |
+|:--|:--|:--|
+| `windows_version` | `windows-latest`, `windows-2025`, `windows-2022`, `windows-11-arm`, `windows-2025-vs2026` | `windows-2025` |
+| `remote_access` | `rdp` / `novnc` / `both` | `rdp` |
+| `duration_hours` | `1` / `3` / `6` | `6` |
+| `hostname_mode` | `same_each_run` / `unique_each_run` | `same_each_run` |
+| `rdp_password_mode` / `vnc_password_mode` | `same_from_secret` / `random_each_run` | `same_from_secret` |
+| `novnc_transport` | `tailscale_tcp` / `tailscale_https` | `tailscale_tcp` |
 
-1. Instal **TightVNC Server** dan atur password. Batasi server agar hanya mendengarkan di `127.0.0.1:5900`.
-2. Instal **Python 3** dan unduh source [noVNC](https://github.com/novnc/noVNC) ke `C:\WFS\noVNC`.
-3. Jalankan PowerShell:
+**Catatan:** mode noVNC tidak didukung pada runner Windows ARM64 dalam workflow ini; pilih runner x64 untuk `novnc` atau `both`. Label `windows-2025-vs2026` mungkin tidak tersedia untuk semua jenis repository.
 
-```powershell
-py -m pip install --upgrade websockify
-py -m websockify --web "C:\WFS\noVNC" 127.0.0.1:6081 127.0.0.1:5900
+## 🖥️ Cara masuk ke workspace
+
+<details>
+<summary><strong>Opsi A — Microsoft Remote Desktop (RDP)</strong></summary>
+
+Pastikan `remote_access=rdp` atau `both` dan PC Anda tersambung ke Tailscale.
+
+1. Tekan `Win + R` → ketik `mstsc` → Enter.
+2. Isi **Computer** dengan hostname Tailscale atau IP `100.x.x.x` yang tercantum pada Actions Summary.
+3. Login dengan username `RDP` dan password sesuai `rdp_password_mode`.
+4. Port yang digunakan adalah TCP `3389` melalui Tailscale; **bukan** RDP yang dipublikasikan ke internet.
+
+</details>
+
+<details>
+<summary><strong>Opsi B — noVNC dari browser (disarankan untuk akses web)</strong></summary>
+
+Pastikan `remote_access=novnc` atau `both`. Buka **alamat aktual yang dicetak pada Summary** dari perangkat yang sudah terhubung ke tailnet:
+
+| Transport | Format URL | Catatan |
+|:--|:--|:--|
+| `tailscale_tcp` | `http://100.x.x.x:6082/vnc.html` | **HTTP** pada port 6082; lalu autentikasi VNC |
+| `tailscale_https` | `https://nama-host.tailnet.ts.net/vnc.html` | **HTTPS** via Tailscale Serve port 443; FQDN sebenarnya ada di Summary |
+
+Klik **Connect**, lalu isi password VNC. **Jangan** mengganti `http://` menjadi `https://` pada port `6082`: port tersebut adalah proxy TCP yang meneruskan HTTP, bukan listener TLS. Transport Tailscale tetap mengenkripsi koneksi antar-perangkat dalam tailnet.
+
+noVNC mengakses **sesi console Windows**, yang dapat berbeda dari desktop user pada sesi RDP. Keberhasilan membuka HTML tidak otomatis berarti koneksi WebSocket atau layar VNC sudah berfungsi.
+
+</details>
+
+## 🔬 Verifikasi di Actions
+
+Untuk mode noVNC, jalur yang diperiksa workflow adalah:
+
+```text
+Install noVNC + TightVNC
+           ↓
+Websockify sebagai Scheduled Task (SYSTEM) di 127.0.0.1:6081
+           ↓
+Tailscale Serve TCP 6082 atau HTTPS 443
+           ↓
+Verify noVNC HTTP, WebSocket and RFB
+           ↓
+Generate Dashboard Summary
+           ↓
+Remote READY – Keep Alive
 ```
 
-4. Buka **http://127.0.0.1:6081/vnc.html**. Jika halaman muncul tetapi Connect gagal, periksa TightVNC di `127.0.0.1:5900`.
+Di Summary, lihat nilai **noVNC localhost HTTP**, **localhost WebSocket/VNC-RFB**, **Tailscale Serve self-probe HTTP**, dan **self-probe WebSocket/VNC-RFB**.
 
-Untuk menguji HTTPS lokal dengan email OTP, unduh [cloudflared Windows](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) dan jalankan di PowerShell **kedua**:
+> [!NOTE]
+> Self-probe berjalan **dari dalam runner**, bukan dari PC Anda. Hasil `PASS` membantu memisahkan masalah backend dan Serve, tetapi **belum membuktikan akses eksternal**. Setelah run aktif, uji koneksi dari PC Tailscale Anda sendiri.
 
-```powershell
-.\cloudflared.exe tunnel --url http://127.0.0.1:6081 --allowed-mail "email-anda@example.com"
-```
+## 🛠️ Diagnostik di Windows 10/11
 
-Buka URL `https://….trycloudflare.com/vnc.html` yang muncul, verifikasi email, lalu masukkan password VNC. Tekan `Ctrl+C` untuk menghentikan tunnel. **Jangan menghilangkan `--allowed-mail` untuk desktop.**
-
-## 🔍 Diagnostik koneksi
+Gunakan **PowerShell** dan **IP Tailscale terbaru** dari Summary run aktif (ganti `100.x.x.x` pada contoh):
 
 ```powershell
-# Ganti IP dengan IP dari Actions run yang masih aktif
+# Pastikan perangkat runner masih dapat dihubungi di tailnet
 tailscale ping 100.x.x.x
+
+# Mode default: Tailscale Serve TCP 6082
 Test-NetConnection 100.x.x.x -Port 6082
-curl.exe --noproxy "*" --max-time 15 -I "http://100.x.x.x:6082/vnc.html"
+
+# Periksa status HTTP, bukan sekadar port TCP
+curl.exe --noproxy "*" --max-time 15 -sS -o NUL -w "HTTP %{http_code}\n" "http://100.x.x.x:6082/vnc.html"
+
+# Untuk mode tailscale_https, cek port 443:
+# Test-NetConnection <IP-TAILSCALE> -Port 443
+# Buka URL https://<hostname>.ts.net/vnc.html dari Actions Summary
 ```
 
-| Gejala | Solusi |
+| Gejala | Pemeriksaan |
 |:--|:--|
-| Ping berhasil tetapi port gagal | Cek Tailscale Serve, status runner, ACL/grants |
-| TCP berhasil tetapi halaman tidak tampil | Uji respons HTTP, pastikan browser tidak memaksa HTTPS pada port 6082 |
-| Halaman tampil tetapi Connect gagal | Periksa tab Network → WS dan status WebSocket/RFB di Actions Summary |
-| Link Cloudflare tidak bisa dibuka | Periksa step Cloudflare, email OTP, dan apakah runner masih aktif |
-| URL lama mati | Gunakan URL dari run baru; hostname Quick Tunnel berubah |
+| Tailscale ping gagal | Runner mungkin sudah berhenti; periksa IP terbaru, perangkat online, dan login tailnet |
+| Ping berhasil tetapi TCP 6082 gagal | Periksa mode `novnc_transport`, pemetaan Tailscale Serve, dan ACL/grants tailnet |
+| TCP 6082 sukses tetapi `curl` gagal | Periksa langkah verifikasi HTTP dan status Scheduled Task websockify pada log run |
+| HTTP 200 tetapi tombol **Connect** gagal | Buka `F12 → Network → WS`, lalu bandingkan log WebSocket/VNC-RFB di Actions |
+| Browser mencoba HTTPS pada port 6082 | Gunakan `http://` secara eksplisit, nonaktifkan upgrade HTTPS otomatis untuk alamat tersebut bila diperlukan |
+| Halaman lama mati | Runner GitHub Actions bersifat sementara; salin IP/URL dari run baru |
+| Password VNC ditolak | Periksa pilihan password mode; VNCAuth hanya memproses delapan byte pertama |
+| Ingin HTTPS tanpa port 6082 | Aktifkan sertifikat/Serve HTTPS di tailnet dan pilih `tailscale_https` pada run berikutnya |
 
-## ⏳ Keep Alive — sampai 6 jam atau dibatalkan
+Untuk diagnosis koneksi noVNC lebih detail, buka halaman dengan `?logging=debug` lalu lihat Developer Tools di browser.
 
-Job memakai `timeout-minutes: 360`. Setelah instalasi, **Remote READY – Keep Alive** terus mengirim heartbeat setiap 60 detik dan tidak berhenti berdasarkan durasi tidur buatan. Job berakhir ketika Anda menekan **Cancel workflow** atau ketika GitHub mencapai batas **6 jam total sejak job mulai**. Waktu instalasi **termasuk** dalam enam jam tersebut.
+## ⏳ Durasi, Keep Alive, dan cleanup
 
-Cleanup Tailscale dijalankan secara *best effort*; saat timeout atau cancel paksa, cleanup tidak selalu sempat selesai. Runner tidak dapat dipertahankan melebihi batas platform.
+- `duration_hours` tersedia dengan pilihan **1, 3, atau 6 jam**; penghitung sesi dimulai saat langkah **Remote READY – Keep Alive** berjalan.
+- Job GitHub Actions tetap memiliki **`timeout-minutes: 360` (maksimal 6 jam dari awal job)**. Waktu instalasi ikut dihitung, sehingga opsi 6 jam tidak menjamin enam jam penuh *setelah* proses setup.
+- Heartbeat Keep Alive tercetak setiap sekitar **60 detik**. Status `in_progress` pada tahap ini **normal**: runner sedang dipertahankan untuk remote access.
+- Sesi dapat dihentikan lebih awal dengan **Cancel workflow**. Langkah cleanup mencoba melakukan `tailscale logout`; ketika dibatalkan paksa atau timeout, cleanup bersifat *best effort*.
+- Data, aplikasi, dan proses di runner **tidak persist** setelah runner dihentikan.
 
-## 📦 Aplikasi yang dapat dipilih
+## 📦 Aplikasi opsional
 
-VS Code, Antigravity, CapCut, Shotcut, MetaTrader 4/5, AI API routers, Codex CLI, Claude Code, Hermes, OpenClaw, OpenCode, ArtCraft Launcher, serta aplikasi dasar. Ketersediaan tergantung image Windows dan installer.
+Form workflow menyediakan pilihan IDE (VS Code/Antigravity), editor video (CapCut/Shotcut), MetaTrader 4/5, AI API router (9Router/OmniRoute), coding agent (Codex CLI/Claude Code), AI agent (Hermes/OpenClaw/OpenCode), dan **ArtCraft Launcher**. Ketersediaan setiap aplikasi bergantung pada image Windows, installer, dan hasil langkah instalasi. Periksa tabel **App Status** pada Actions Summary; jangan menganggap semua aplikasi berhasil hanya karena workflow mencapai tahap Remote READY.
 
-## 🛡️ Keamanan
+## 🔒 Keamanan dan batasan
 
-- Tailscale adalah jalur **privat** yang direkomendasikan.
-- Cloudflare Preview memakai **HTTPS + email OTP + password VNC**, tetapi endpoint dapat dijangkau dari internet.
-- VNCAuth klasik hanya memakai **delapan byte pertama** password.
-- Jangan simpan data penting secara eksklusif pada runner sementara.
-- **Success** pada tahap setup tidak membuktikan browser eksternal bisa tersambung; lakukan pengujian nyata.
+- Akses remote ditujukan ke **tailnet**, bukan tautan publik atau Cloudflare Tunnel.
+- Jangan membuka port RDP/VNC ke internet atau membagikan auth key/password.
+- Untuk akun remote, gunakan password kuat dan hindari mempublikasikan log yang mengandung kredensial acak.
+- noVNC dan RDP bisa menampilkan sesi Windows berbeda; tidak ada jaminan semua aplikasi memiliki UI aktif di console session.
+- Proyek ini menyediakan **lingkungan pengujian sementara**. Keberhasilan koneksi nyata tetap harus dikonfirmasi pada perangkat klien.
 
 ---
 
 <div align="center">
 
-**WFS Tech • Build, connect, test.**
+**WFS Tech • Build. Connect. Test.**
 
-[▶️ Start Workspace](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml) · [📖 Cloudflare Docs](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/) · [🛡️ Tailscale Docs](https://tailscale.com/kb)
+[▶ Run Windows Workspace](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml) · [GitHub Actions](https://github.com/wawanwfs/RDP/actions) · [Tailscale Docs](https://tailscale.com/kb) · [noVNC Project](https://github.com/novnc/noVNC)
 
 </div>

@@ -161,11 +161,19 @@ run-name: "🚀 Windows Workspace • ${{ inputs.remote_access }} • ${{ inputs
           - "tailscale_tcp"
           - "tailscale_https"
 
+      cloudflare_preview:
+        description: "Cloudflare HTTPS browser preview; requires CLOUDFLARE_ALLOWED_EMAIL secret"
+        required: true
+        default: false
+        type: boolean
+
 jobs:
   secure-rdp:
     name: 🪟 Windows Remote Workspace (RDP / noVNC)
     runs-on: ${{ inputs.windows_version }}
     timeout-minutes: 360
+    permissions:
+      contents: read
 
     env:
       RDP_USER: RDP
@@ -2632,6 +2640,59 @@ jobs:
             Write-Host '✅ Tailscale Serve HTTP and WebSocket self-probes passed. External client/browser access remains unverified.'
           }
 
+      - name: ☁️ Cloudflare HTTPS Preview (email OTP protected)
+        if: inputs.cloudflare_preview && inputs.remote_access != 'rdp'
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          CLOUDFLARE_ALLOWED_EMAIL: ${{ secrets.CLOUDFLARE_ALLOWED_EMAIL }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $allowedEmail = ([string]$env:CLOUDFLARE_ALLOWED_EMAIL).Trim()
+          if ($allowedEmail -notmatch '^[^@\s,]+@[^@\s,]+\.[^@\s,]+$') {
+            throw 'Set GitHub secret CLOUDFLARE_ALLOWED_EMAIL to one email address before enabling public Cloudflare preview.'
+          }
+          $dir = Join-Path $env:RUNNER_TEMP 'wfs-cloudflare-preview'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $exe = Join-Path $dir 'cloudflared.exe'
+          Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile $exe -TimeoutSec 90
+          if ((Get-Item -LiteralPath $exe).Length -lt 5000000) { throw 'cloudflared download is unexpectedly small.' }
+          $sig = Get-AuthenticodeSignature -LiteralPath $exe
+          if ($sig.Status -ne 'Valid' -or [string]$sig.SignerCertificate.Subject -notmatch 'Cloudflare') {
+            throw 'Cloudflared signature verification failed. Refusing to execute an unverified binary.'
+          }
+          $log = Join-Path $dir 'cloudflared.log'
+          $psi = [Diagnostics.ProcessStartInfo]::new($exe)
+          $psi.UseShellExecute = $false
+          $psi.CreateNoWindow = $true
+          foreach ($arg in @('tunnel','--no-autoupdate','--url','http://127.0.0.1:6081','--allowed-mail',$allowedEmail,'--logfile',$log,'--loglevel','info')) {
+            [void]$psi.ArgumentList.Add([string]$arg)
+          }
+          $proc = [Diagnostics.Process]::Start($psi)
+          if (-not $proc) { throw 'cloudflared failed to start.' }
+          Write-Host "Cloudflare tunnel started with email OTP restriction (PID $($proc.Id))."
+          $previewUrl = $null
+          for ($i = 0; $i -lt 45; $i++) {
+            if ($proc.HasExited) { break }
+            if (Test-Path $log) {
+              $content = Get-Content -LiteralPath $log -Raw -ErrorAction SilentlyContinue
+              if ($content -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
+                $previewUrl = $Matches[0]
+                break
+              }
+            }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $previewUrl) {
+            if (Test-Path $log) { Get-Content $log -Tail 20 | Out-Host }
+            throw 'Cloudflare Quick Tunnel URL was not issued within 90 seconds.'
+          }
+          "CLOUDFLARE_PREVIEW_URL=$previewUrl/vnc.html" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          "CLOUDFLARE_PREVIEW_PID=$($proc.Id)" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          Write-Host "☁️ Cloudflare HTTPS preview: $previewUrl/vnc.html"
+          Write-Host '🔒 Sign in with the allowed email one-time PIN, then enter the VNC password.'
+          Write-Host 'This is a temporary Internet-accessible link, not a Tailscale-only address.'
+
       - name: 📊 Generate Dashboard Summary
         shell: pwsh
         run: |
@@ -2894,6 +2955,13 @@ jobs:
             $summaryLines.Add("") | Out-Null
           }
 
+          if ($env:CLOUDFLARE_PREVIEW_URL) {
+            $summaryLines.Add("## ☁️ Cloudflare HTTPS Browser Preview") | Out-Null
+            $summaryLines.Add("") | Out-Null
+            $summaryLines.Add("**HTTPS preview URL:** [$env:CLOUDFLARE_PREVIEW_URL]($env:CLOUDFLARE_PREVIEW_URL)") | Out-Null
+            $summaryLines.Add("**Login:** allowed email one-time PIN, then VNC password. This link is accessible from the Internet to authorized email users.") | Out-Null
+            $summaryLines.Add("") | Out-Null
+          }
           $summaryLines.Add("## 🔗 Connection Details") | Out-Null
           $summaryLines.Add("") | Out-Null
           $summaryLines.Add("| Item | Value |") | Out-Null
@@ -2903,7 +2971,7 @@ jobs:
           $summaryLines.Add("| Tailscale IP | ``$env:TAILSCALE_IP`` |") | Out-Null
           $summaryLines.Add("| Hostname Mode | ``$hostnameMode`` |") | Out-Null
           $summaryLines.Add("| Password Mode | ``$passwordMode`` |") | Out-Null
-          $summaryLines.Add("| Runtime Duration | ``$durationHours hour(s)`` |") | Out-Null
+          $summaryLines.Add("| Maximum job lifetime | 6 hours from job start, including installation; manual cancellation anytime |") | Out-Null
           $summaryLines.Add("| Remote access method | $remoteMode |") | Out-Null
           $summaryLines.Add("| IDE Choice | ``$ideChoice`` |") | Out-Null
           $summaryLines.Add("| Video Editor Choice | ``$editorChoice`` |") | Out-Null
@@ -2957,7 +3025,7 @@ jobs:
 
           $summaryLines.Add("## 🧹 Cleanup") | Out-Null
           $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("Saat runtime selesai, gagal, atau workflow masuk cleanup, step terakhir akan mencoba menjalankan ``tailscale logout`` otomatis.") | Out-Null
+          $summaryLines.Add("Keep Alive berjalan hingga dibatalkan manual atau job mencapai batas maksimal 6 jam sejak awal job (termasuk instalasi). Cleanup pada cancel/timeout bersifat best effort.") | Out-Null
 
           $summaryLines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
@@ -3008,6 +3076,7 @@ jobs:
             Write-Host "║  Protocol : $env:NOVNC_TRANSPORT"
             Write-Host "║  Local WS : $env:NOVNC_LOCAL_WS_STATUS"
             Write-Host "║  Serve WS : $env:NOVNC_SERVE_SELF_WS_STATUS"
+            if ($env:CLOUDFLARE_PREVIEW_URL) { Write-Host "║  CF HTTPS : $env:CLOUDFLARE_PREVIEW_URL" }
             $vncHint = if ($vncPasswordMode -eq 'same_from_secret') { 'secret VNC_PASSWORD' } else { 'generated; see noVNC step log' }
             Write-Host "║  VNC pass : $vncHint"
           }
@@ -3015,20 +3084,17 @@ jobs:
           Write-Host ""
 
           try {
-            $hours = [int]'${{ inputs.duration_hours }}'
-            $seconds = $hours * 3600
-            $elapsed = 0
-
-            Write-Host "Remote is ready. This step intentionally stays active for $hours hour(s)."
-            while ($elapsed -lt $seconds) {
-              $minutesLeft = [Math]::Ceiling(($seconds - $elapsed) / 60)
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Remote READY - $minutesLeft minute(s) remaining"
-              $sleepFor = [Math]::Min(60, $seconds - $elapsed)
-              Start-Sleep -Seconds $sleepFor
-              $elapsed += $sleepFor
+            # The GitHub-hosted job hard limit (360 minutes) includes all
+            # installation time. Stay up until manual cancellation or timeout.
+            Write-Host 'Session stays alive until manual cancellation or the GitHub-hosted 6-hour job limit.'
+            while ($true) {
+              Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Remote READY - keep alive"
+              if ($env:CLOUDFLARE_PREVIEW_PID) {
+                $cfProc = Get-Process -Id ([int]$env:CLOUDFLARE_PREVIEW_PID) -ErrorAction SilentlyContinue
+                if (-not $cfProc) { Write-Warning 'Cloudflare tunnel has stopped; its temporary HTTPS link is no longer available.' }
+              }
+              Start-Sleep -Seconds 60
             }
-
-            Write-Host "Session completed."
           } finally {
             Logout-TailscaleSafely
           }

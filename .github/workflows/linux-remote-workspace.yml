@@ -25,6 +25,77 @@ on:
           - "mate"
           - "kde"
           - "i3"
+      remote_access:
+        description: "Jenis remote Linux: native RDP, browser Selkies, atau keduanya"
+        required: true
+        type: choice
+        default: "browser"
+        options:
+          - "rdp"
+          - "browser"
+          - "both"
+      ide_choice:
+        description: "IDE seperti Windows: VS Code / Antigravity / Both"
+        required: true
+        type: choice
+        default: "none"
+        options:
+          - "none"
+          - "antigravity"
+          - "vscode"
+          - "both"
+      editor_choice:
+        description: "Editor: CapCut / Shotcut / Both (CapCut Windows-only)"
+        required: true
+        type: choice
+        default: "none"
+        options:
+          - "none"
+          - "capcut"
+          - "shotcut"
+          - "both"
+      metatrader_choice:
+        description: "MetaTrader: MT4 / MT5 / Both (Wine & GUI setup may be required)"
+        required: true
+        type: choice
+        default: "none"
+        options:
+          - "none"
+          - "mt4"
+          - "mt5"
+          - "both"
+      router_choice:
+        description: "AI API Router: 9Router / OmniRoute / Both"
+        required: true
+        type: choice
+        default: "none"
+        options:
+          - "none"
+          - "9router"
+          - "omniroute"
+          - "both"
+      coding_agent_choice:
+        description: "Coding Agent: Codex / Claude / Both"
+        required: true
+        type: choice
+        default: "none"
+        options:
+          - "none"
+          - "codex"
+          - "claude"
+          - "both"
+      ai_agent_choice:
+        description: "AI Agent: Hermes / OpenClaw / OpenCode / Both / All"
+        required: true
+        type: choice
+        default: "none"
+        options:
+          - "none"
+          - "hermes"
+          - "openclaw"
+          - "opencode"
+          - "both"
+          - "all"
       duration_hours:
         description: "Durasi setelah desktop ready (batas total job 6 jam)"
         required: true
@@ -65,7 +136,7 @@ permissions:
 
 jobs:
   linux-remote-workspace:
-    name: "Linux GUI via Tailscale / Browser"
+    name: "Linux GUI via Tailscale / RDP / Browser"
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     defaults:
@@ -77,6 +148,13 @@ jobs:
       WFS_DURATION: ${{ inputs.duration_hours }}
       WFS_TRANSPORT: ${{ inputs.transport }}
       WFS_APPS: ${{ inputs.apps_bundle }}
+      WFS_REMOTE: ${{ inputs.remote_access }}
+      WFS_IDE: ${{ inputs.ide_choice }}
+      WFS_EDITOR: ${{ inputs.editor_choice }}
+      WFS_METATRADER: ${{ inputs.metatrader_choice }}
+      WFS_ROUTER: ${{ inputs.router_choice }}
+      WFS_CODING_AGENT: ${{ inputs.coding_agent_choice }}
+      WFS_AI_AGENT: ${{ inputs.ai_agent_choice }}
     steps:
       - name: "📦 Checkout Linux workspace scripts"
         uses: actions/checkout@v7.0.1
@@ -90,6 +168,11 @@ jobs:
         timeout-minutes: 15
         run: bash linux/workspace.sh start
 
+      - name: "🖥️ Start native Linux xrdp server for RDP / both"
+        if: inputs.remote_access == 'rdp' || inputs.remote_access == 'both'
+        timeout-minutes: 15
+        run: bash linux/setup-rdp.sh
+
       - name: "🐾 Connect temporary runner to private Tailscale tailnet"
         uses: tailscale/github-action@v4
         with:
@@ -98,13 +181,13 @@ jobs:
           version: latest
           args: "--accept-routes=false --accept-dns=false"
 
-      - name: "🌐 Publish exactly one private HTTPS browser endpoint"
+      - name: "🌐 Publish private browser/RDP endpoints through Tailscale"
         timeout-minutes: 3
         run: bash linux/workspace.sh publish
 
       - name: "📦 Install optional Linux application bundle"
-        if: inputs.apps_bundle != 'none'
-        timeout-minutes: 10
+        if: inputs.apps_bundle != 'none' || inputs.ide_choice != 'none' || inputs.editor_choice != 'none' || inputs.metatrader_choice != 'none' || inputs.router_choice != 'none' || inputs.coding_agent_choice != 'none' || inputs.ai_agent_choice != 'none'
+        timeout-minutes: 18
         continue-on-error: true
         run: bash linux/install-apps.sh
 

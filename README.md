@@ -86,7 +86,7 @@ Buka **[Settings → Secrets and variables → Actions](https://github.com/wawan
 2. Buka **[Windows Remote Workspace with Apps](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml)** → **Run workflow** → pilih branch `main`.
 3. Pilih `windows_version` (disarankan `windows-2025`), lalu `remote_access`: `rdp`, `novnc`, atau `both`.
 4. Pilih `duration_hours`: `1`, `3`, atau `6` (default), serta aplikasi/IDE yang ingin dipasang.
-5. Untuk noVNC, pilih `novnc_transport=tailscale_tcp` (default). Pilih `tailscale_https` hanya jika HTTPS dan sertifikat Tailscale Serve sudah diaktifkan pada tailnet.
+5. Untuk noVNC, pilih `novnc_transport=tailscale_tcp` (default). Mode `tailscale_https` memerlukan HTTPS Certificates dan MagicDNS aktif pada tailnet; jika setup/sertifikat HTTPS gagal, workflow akan mencoba otomatis **fallback ke TCP privat 6082**.
 6. Klik **Run workflow**, buka run tersebut, dan lihat **Summary** untuk hostname, IP, URL noVNC aktual, serta petunjuk password. Gunakan **URL dari run yang sedang aktif**, bukan URL sesi sebelumnya.
 
 **Pilihan utama pada formulir Actions**
@@ -124,9 +124,9 @@ Pastikan `remote_access=novnc` atau `both`. Buka **alamat aktual yang dicetak pa
 | Transport | Format URL | Catatan |
 |:--|:--|:--|
 | `tailscale_tcp` | `http://100.x.x.x:6082/vnc.html#resize=scale&autoconnect=1` | **HTTP** pada port 6082; lalu autentikasi VNC |
-| `tailscale_https` | `https://nama-host.tailnet.ts.net/vnc.html#resize=scale&autoconnect=1` | **HTTPS** via Tailscale Serve port 443; FQDN sebenarnya ada di Summary |
+| `tailscale_https` | `https://nama-host.tailnet.ts.net/vnc.html#resize=scale&autoconnect=1` | **HTTPS** via Tailscale Serve port 443 jika berhasil diuji; jika gagal gunakan URL HTTP 6082 dari Summary |
 
-Halaman noVNC kini **mencoba terkoneksi otomatis** ketika dibuka (password VNC tetap diminta jika diperlukan). **Jangan** mengganti `http://` menjadi `https://` pada port `6082`: port tersebut adalah proxy TCP yang meneruskan HTTP, bukan listener TLS. Transport Tailscale tetap mengenkripsi koneksi antar-perangkat dalam tailnet.
+Halaman noVNC **mencoba terkoneksi otomatis** ketika dibuka (password VNC tetap diminta jika diperlukan). Jika memilih `tailscale_https` tetapi sertifikat/izin Tailscale Serve belum siap, workflow akan menonaktifkan konfigurasi HTTPS yang gagal, lalu mengaktifkan **TCP 6082**. Summary mencantumkan **Requested transport**, **Active transport**, dan **HTTPS fallback** (bila terjadi), sehingga jangan mengasumsikan HTTPS aktif sebelum melihat URL aktual. **Jangan** mengganti `http://` menjadi `https://` pada port `6082`: layanan HTTP tersebut tetap dilindungi enkripsi antar-node Tailscale, bukan port publik.
 
 noVNC mengakses **sesi console Windows**, yang dapat berbeda dari desktop user pada sesi RDP. Keberhasilan membuka HTML tidak otomatis berarti koneksi WebSocket atau layar VNC sudah berfungsi.
 
@@ -201,7 +201,8 @@ curl.exe --noproxy "*" --max-time 15 -sS -o NUL -w "HTTP %{http_code}\n" "http:/
 | Browser mencoba HTTPS pada port 6082 | Gunakan `http://` secara eksplisit, nonaktifkan upgrade HTTPS otomatis untuk alamat tersebut bila diperlukan |
 | Halaman lama mati | Runner GitHub Actions bersifat sementara; salin IP/URL dari run baru |
 | Password VNC ditolak | Periksa pilihan password mode; VNCAuth hanya memproses delapan byte pertama |
-| Ingin HTTPS tanpa port 6082 | Aktifkan sertifikat/Serve HTTPS di tailnet dan pilih `tailscale_https` pada run berikutnya |
+| Ingin HTTPS tanpa port 6082 | Aktifkan MagicDNS dan HTTPS Certificates di pengaturan DNS Tailscale, lalu pilih `tailscale_https` pada run berikutnya |
+| HTTPS Serve timeout, runner sebelumnya langsung gagal | Workflow baru melakukan retry/probe HTTPS dan otomatis fallback ke TCP 6082. Gunakan URL **Active transport** dari Summary. Jika tetap menginginkan HTTPS, periksa persetujuan tailnet dan sertifikat Tailscale |
 
 Untuk diagnosis koneksi noVNC lebih detail, tambahkan `&logging=debug` ke URL yang sudah berisi `#resize=scale&autoconnect=1`, lalu lihat Developer Tools di browser.
 

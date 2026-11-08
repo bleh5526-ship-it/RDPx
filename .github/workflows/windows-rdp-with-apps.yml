@@ -2430,6 +2430,7 @@ jobs:
           $installArtCraft = '${{ inputs.install_artcraft }}' -eq 'true'
           $hostnameMode = '${{ inputs.hostname_mode }}'
           $passwordMode = '${{ inputs.rdp_password_mode }}'
+          $remoteMode = '${{ inputs.remote_access }}'
           $durationHours = '${{ inputs.duration_hours }}'
           $windowsVersion = '${{ inputs.windows_version }}'
 
@@ -2650,13 +2651,23 @@ jobs:
 
           $summaryLines.Add("## 🎯 Recommended Login") | Out-Null
           $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("| Use this | Value |") | Out-Null
-          $summaryLines.Add("|---|---|") | Out-Null
-          $summaryLines.Add("| Primary address | ``$env:TAILSCALE_HOSTNAME`` |") | Out-Null
-          $summaryLines.Add("| Fallback address | ``$env:TAILSCALE_IP`` |") | Out-Null
-          $summaryLines.Add("| Username | ``$env:RDP_USER`` |") | Out-Null
-          $summaryLines.Add("| Password | $passwordDisplay |") | Out-Null
-          $summaryLines.Add("") | Out-Null
+          if ($remoteMode -in @('rdp','both')) {
+            $summaryLines.Add("| RDP access | Value |") | Out-Null
+            $summaryLines.Add("|---|---|") | Out-Null
+            $summaryLines.Add("| RDP hostname | $env:TAILSCALE_HOSTNAME |") | Out-Null
+            $summaryLines.Add("| RDP IP | $env:TAILSCALE_IP |") | Out-Null
+            $summaryLines.Add("| Windows username | $env:RDP_USER |") | Out-Null
+            $summaryLines.Add("| Windows password | $passwordDisplay |") | Out-Null
+            $summaryLines.Add("") | Out-Null
+          }
+          if ($remoteMode -in @('novnc','both')) {
+            $summaryLines.Add("| noVNC browser access | Value |") | Out-Null
+            $summaryLines.Add("|---|---|") | Out-Null
+            $summaryLines.Add("| Web URL (Tailscale network) | [$env:NOVNC_URL]($env:NOVNC_URL) |") | Out-Null
+            $summaryLines.Add("| Browser VNC password | GitHub repository secret VNC_PASSWORD (8 letters/digits) |") | Out-Null
+            $summaryLines.Add("| Visible desktop | Windows console (not necessarily the separate RDP user desktop) |") | Out-Null
+            $summaryLines.Add("") | Out-Null
+          }
 
           $summaryLines.Add("## 🔗 Connection Details") | Out-Null
           $summaryLines.Add("") | Out-Null
@@ -2668,6 +2679,7 @@ jobs:
           $summaryLines.Add("| Hostname Mode | ``$hostnameMode`` |") | Out-Null
           $summaryLines.Add("| Password Mode | ``$passwordMode`` |") | Out-Null
           $summaryLines.Add("| Runtime Duration | ``$durationHours hour(s)`` |") | Out-Null
+          $summaryLines.Add("| Remote access method | $remoteMode |") | Out-Null
           $summaryLines.Add("| IDE Choice | ``$ideChoice`` |") | Out-Null
           $summaryLines.Add("| Video Editor Choice | ``$editorChoice`` |") | Out-Null
           $summaryLines.Add("| MetaTrader Choice | ``$metatraderChoice`` |") | Out-Null
@@ -2689,12 +2701,14 @@ jobs:
 
           $summaryLines.Add("## 🚀 How to Connect") | Out-Null
           $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("1. Buka **Microsoft Remote Desktop** di perangkat kamu.") | Out-Null
-          $summaryLines.Add("2. Pastikan perangkat kamu sudah login ke **Tailscale tailnet yang sama**.") | Out-Null
-          $summaryLines.Add("3. Masukkan **Primary address**: ``$env:TAILSCALE_HOSTNAME``.") | Out-Null
-          $summaryLines.Add("4. Jika hostname belum connect, pakai **Fallback address**: ``$env:TAILSCALE_IP``.") | Out-Null
-          $summaryLines.Add("5. Login dengan username ``$env:RDP_USER`` dan password di bagian Recommended Login.") | Out-Null
-          $summaryLines.Add("6. Buka IDE dari Desktop atau Start Menu setelah masuk RDP.") | Out-Null
+          $summaryLines.Add("Hubungkan perangkat Anda ke Tailscale tailnet yang sama.") | Out-Null
+          if ($remoteMode -in @('rdp','both')) {
+            $summaryLines.Add("**RDP:** Gunakan Microsoft Remote Desktop, hostname $env:TAILSCALE_HOSTNAME (atau IP $env:TAILSCALE_IP), lalu login dengan akun $env:RDP_USER.") | Out-Null
+          }
+          if ($remoteMode -in @('novnc','both')) {
+            $summaryLines.Add("**noVNC:** Buka [$env:NOVNC_URL]($env:NOVNC_URL) di browser yang terhubung ke Tailscale, tekan Connect, dan masukkan secret VNC_PASSWORD.") | Out-Null
+            $summaryLines.Add("noVNC menampilkan sesi console Windows. Jika memilih both, sesi RDP dan sesi noVNC mungkin berbeda.") | Out-Null
+          }
           $summaryLines.Add("") | Out-Null
 
           $summaryLines.Add("## 🧯 Troubleshooting") | Out-Null
@@ -2707,6 +2721,10 @@ jobs:
           $summaryLines.Add("| Antigravity belum muncul | Login ulang ke user RDP atau buka shortcut Antigravity; workflow menyiapkan copy per-user |") | Out-Null
           $summaryLines.Add("| RDP timeout | Pastikan device lokal sudah connect ke Tailscale dan berada di tailnet yang sama |") | Out-Null
           $summaryLines.Add("| MagicDNS belum resolve | Tunggu sebentar atau langsung pakai IP Tailscale |") | Out-Null
+          if ($remoteMode -in @('novnc','both')) {
+            $summaryLines.Add("| noVNC tidak terbuka | Periksa Tailscale client, firewall port 6080 dan log ProgramData/RDP-Setup/noVNC |") | Out-Null
+            $summaryLines.Add("| noVNC password ditolak | Gunakan secret VNC_PASSWORD, berbeda dengan Windows RDP password |") | Out-Null
+          }
           $summaryLines.Add("") | Out-Null
 
           $summaryLines.Add("## 🧹 Cleanup") | Out-Null
@@ -2719,6 +2737,7 @@ jobs:
         shell: pwsh
         run: |
           $passwordMode = '${{ inputs.rdp_password_mode }}'
+          $remoteMode = '${{ inputs.remote_access }}'
 
           if ($passwordMode -eq "same_from_secret") {
             $passwordForDisplay = "Use GitHub Secret RDP_PASSWORD"
@@ -2745,12 +2764,20 @@ jobs:
 
           Write-Host ""
           Write-Host "╔══════════════════════════════════════╗"
-          Write-Host "║          WINDOWS RDP READY           ║"
+          Write-Host "║         WINDOWS REMOTE READY         ║"
           Write-Host "╠══════════════════════════════════════╣"
           Write-Host "║  Hostname : $env:TAILSCALE_HOSTNAME"
           Write-Host "║  IP       : $env:TAILSCALE_IP"
           Write-Host "║  Username : $env:RDP_USER"
-          Write-Host "║  Password : $passwordForDisplay"
+          Write-Host "║  Mode     : $remoteMode"
+          if ($remoteMode -in @('rdp','both')) {
+            Write-Host "║  RDP user : $env:RDP_USER"
+            Write-Host "║  Password : $passwordForDisplay"
+          }
+          if ($remoteMode -in @('novnc','both')) {
+            Write-Host "║  noVNC    : $env:NOVNC_URL"
+            Write-Host "║  VNC pass : secret VNC_PASSWORD"
+          }
           Write-Host "╚══════════════════════════════════════╝"
           Write-Host ""
 

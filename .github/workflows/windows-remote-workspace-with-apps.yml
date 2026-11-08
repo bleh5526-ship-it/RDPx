@@ -202,9 +202,9 @@ jobs:
                 Add-Type -TypeDefinition @'
           using System;
           using System.Runtime.InteropServices;
-          internal static class WfsDesktopWallpaper {
+          public static class WfsDesktopWallpaper {
             [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-            internal static extern bool SystemParametersInfo(uint action, uint param, string path, uint flags);
+            public static extern bool SystemParametersInfo(uint action, uint param, string path, uint flags);
           }
           '@
                 $applied = [WfsDesktopWallpaper]::SystemParametersInfo(20,0,$stock,3)

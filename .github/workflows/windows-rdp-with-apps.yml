@@ -197,7 +197,7 @@ jobs:
           # Keep Microsoft Defender real-time protection enabled.
           # Network tweaks
           netsh int tcp set global autotuninglevel=normal
-          netsh int tcp set global chimney=disabled
+          # Chimney offload is unsupported by netsh on current Windows images.
           netsh int tcp set supplemental internet congestionprovider=ctcp
 
           Write-Host "✅ Windows optimization completed"
@@ -240,7 +240,10 @@ jobs:
           Get-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue |
             Disable-NetFirewallRule -ErrorAction SilentlyContinue
 
-          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
+          # netsh delete on a missing rule leaves LASTEXITCODE=1; use a
+          # PowerShell idempotent removal instead.
+          Get-NetFirewallRule -Name 'RDP-Tailscale' -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule -ErrorAction SilentlyContinue
 
           # Do not publish native RDP over Tailscale in noVNC-only mode.
           if ('${{ inputs.remote_access }}' -ne 'novnc') {
@@ -253,6 +256,9 @@ jobs:
           Restart-Service -Name TermService -Force
 
           Write-Host "✅ RDP configured"
+          # The Actions pwsh wrapper exits using the last native program's code;
+          # explicitly checked netsh add errors above must still fail.
+          $global:LASTEXITCODE = 0
 
       - name: 👤 Create RDP User
         shell: pwsh
@@ -2322,6 +2328,10 @@ jobs:
           $msi = Join-Path $base 'tightvnc.msi'
           try {
             Invoke-WebRequest -Uri "https://www.tightvnc.com/download/$version/tightvnc-$version-gpl-setup-64bit.msi" -OutFile $msi -UseBasicParsing -TimeoutSec 180
+            $sha256 = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($sha256 -ne '9693cb4cdc2e7e482e8e3f5890415b57ef87de3369fa5c337db516218a1170ce') {
+              throw 'TightVNC 2.8.90 MSI SHA256 mismatch.'
+            }
             $sig = Get-AuthenticodeSignature -FilePath $msi
             if ($sig.Status -ne 'Valid') { throw "TightVNC signature invalid: $($sig.Status)" }
             $installArgs = @(
@@ -2377,7 +2387,7 @@ jobs:
           New-NetFirewallRule -Name $rule -DisplayName 'WFS noVNC Tailscale only' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 6080 -LocalAddress $env:TAILSCALE_IP -RemoteAddress '100.64.0.0/10' -Profile Any -ErrorAction Stop | Out-Null
           $logOut = Join-Path $base 'websockify.out.log'
           $logErr = Join-Path $base 'websockify.err.log'
-          $args = @('-m','websockify','--web',('"' + $webRoot + '"'),'--listen',$env:TAILSCALE_IP,'6080','127.0.0.1:5900')
+          $args = @('-m', 'websockify', '--web', ('"' + $webRoot + '"'), "$($env:TAILSCALE_IP):6080", '127.0.0.1:5900')
           $proxy = Start-Process -FilePath $python -ArgumentList $args -WindowStyle Hidden -PassThru -RedirectStandardOutput $logOut -RedirectStandardError $logErr
           $url = "http://$($env:TAILSCALE_IP):6080/vnc.html"
           $ready = $false

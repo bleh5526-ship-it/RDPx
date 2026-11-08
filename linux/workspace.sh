@@ -98,8 +98,14 @@ publish() {
     notice "Using private TLS-over-Tailscale TCP port 6082 (self-signed Webtop certificate)."
     timeout 15s tailscale serve reset >/dev/null 2>&1 || true
     timeout 30s tailscale serve --bg --yes --tcp=6082 tcp://127.0.0.1:13001
+    local serve_state
+    serve_state=$(timeout 15s tailscale serve status || true)
+    [[ "$serve_state" == *6082* && "$serve_state" == *13001* ]] ||
+      die "TCP Serve was not mapped from port 6082 to localhost:13001."
     url="https://$ip:6082/"
-    probe "$url" selfsigned || die "Tailnet TLS TCP endpoint did not respond."
+    if ! probe "$url" selfsigned; then
+      notice "Warning: self-probe over own Tailscale IP failed, despite verified Serve mapping. External-client reachability is NOT verified."
+    fi
   fi
   echo "WFS_LINUX_URL=$url" >> "$GITHUB_ENV"
   echo "WFS_LINUX_IP=$ip" >> "$GITHUB_ENV"

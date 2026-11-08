@@ -135,7 +135,16 @@ run-name: "🚀 Windows Workspace • ${{ inputs.remote_access }} • ${{ inputs
           - "same_each_run"
 
       rdp_password_mode:
-        description: "Mode password RDP: random setiap running atau sama dari secrets.RDP_PASSWORD"
+        description: "Password RDP: acak per run atau tetap dari secrets.RDP_PASSWORD"
+        required: true
+        default: "same_from_secret"
+        type: choice
+        options:
+          - "random_each_run"
+          - "same_from_secret"
+
+      vnc_password_mode:
+        description: "Password noVNC: acak per run atau tetap dari secrets.VNC_PASSWORD"
         required: true
         default: "same_from_secret"
         type: choice
@@ -2305,12 +2314,39 @@ jobs:
           VNC_PASSWORD_SECRET: ${{ secrets.VNC_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
-          # VNC's classic authentication handles at most 8 password bytes.
-          $vncPassword = [string]$env:VNC_PASSWORD_SECRET
-          if ($vncPassword -cnotmatch '^[A-Za-z0-9]{8}$') {
-            throw 'Set GitHub repository secret VNC_PASSWORD to exactly 8 ASCII letters/digits.'
+          $passwordMode = '${{ inputs.vnc_password_mode }}'
+          $vncPassword = $null
+
+          if ($passwordMode -eq 'same_from_secret') {
+            # Remove only accidental CR/LF from the end of pasted secrets.
+            $sourcePassword = ([string]$env:VNC_PASSWORD_SECRET).TrimEnd([char]13, [char]10)
+            if ([string]::IsNullOrWhiteSpace($sourcePassword)) {
+              throw 'VNC_PASSWORD is empty. Add GitHub Actions secret VNC_PASSWORD or choose vnc_password_mode=random_each_run.'
+            }
+            Write-Host "::add-mask::$sourcePassword"
+            # Classic VNCAuth supports only eight effective password bytes.
+            # Longer secrets are accepted; the client uses the same prefix.
+            $vncPassword = $sourcePassword.Substring(0, [Math]::Min(8, $sourcePassword.Length))
+            Write-Host "::add-mask::$vncPassword"
+            if ($sourcePassword.Length -gt 8) {
+              Write-Warning 'VNCAuth uses only the first 8 password bytes; remaining characters are ignored by the protocol.'
+            }
+            if ($vncPassword.Length -lt 6) {
+              throw 'VNC_PASSWORD should have at least 6 characters. Set a longer secret or choose random_each_run.'
+            }
+          } elseif ($passwordMode -eq 'random_each_run') {
+            $alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+            $characters = 1..8 | ForEach-Object {
+              $alphabet[[Security.Cryptography.RandomNumberGenerator]::GetInt32($alphabet.Length)]
+            }
+            $vncPassword = -join $characters
+            # GitHub Actions log visibility follows repository visibility.
+            Write-Warning 'Generated password is displayed in this Actions log. In public repositories, logs are publicly readable; browser access remains Tailscale-only.'
+            Write-Host "Generated noVNC password for this run: $vncPassword"
+          } else {
+            throw "Unsupported vnc_password_mode: $passwordMode"
           }
-          Write-Host "::add-mask::$vncPassword"
+          Write-Host "noVNC password mode: $passwordMode"
           if ($env:RUNNER_ARCH -eq 'ARM64') {
             throw 'noVNC is not supported for Windows ARM64 runners. Select x64 or use RDP.'
           }
@@ -2335,7 +2371,7 @@ jobs:
             $sig = Get-AuthenticodeSignature -FilePath $msi
             if ($sig.Status -ne 'Valid') { throw "TightVNC signature invalid: $($sig.Status)" }
             $installArgs = @(
-              '/i', ('"' + $msi + '"'), '/qn', '/norestart',
+              '/i', $msi, '/qn', '/norestart',
               'ADDLOCAL=Server', 'SERVER_REGISTER_AS_SERVICE=1', 'SERVER_ADD_FIREWALL_EXCEPTION=0',
               'SET_ACCEPTRFBCONNECTIONS=1', 'VALUE_OF_ACCEPTRFBCONNECTIONS=1',
               'SET_ACCEPTHTTPCONNECTIONS=1', 'VALUE_OF_ACCEPTHTTPCONNECTIONS=0',
@@ -2346,7 +2382,15 @@ jobs:
               'SET_USECONTROLAUTHENTICATION=1', 'VALUE_OF_USECONTROLAUTHENTICATION=1',
               'SET_CONTROLPASSWORD=1', "VALUE_OF_CONTROLPASSWORD=$vncPassword"
             )
-            $installed = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" -ArgumentList $installArgs -Wait -PassThru -WindowStyle Hidden
+            # .NET ArgumentList keeps MSI properties with symbols or spaces
+            # as a single argument, unlike Start-Process -ArgumentList.
+            $processInfo = [Diagnostics.ProcessStartInfo]::new("$env:SystemRoot\System32\msiexec.exe")
+            $processInfo.UseShellExecute = $false
+            $processInfo.CreateNoWindow = $true
+            foreach ($arg in $installArgs) { [void]$processInfo.ArgumentList.Add([string]$arg) }
+            $installed = [Diagnostics.Process]::Start($processInfo)
+            if (-not $installed) { throw 'TightVNC MSI process could not start.' }
+            $installed.WaitForExit()
             if ($installed.ExitCode -notin @(0,3010,1641)) { throw "TightVNC MSI exit code: $($installed.ExitCode)" }
           } finally {
             Remove-Item -LiteralPath $msi -Force -ErrorAction SilentlyContinue
@@ -2408,7 +2452,12 @@ jobs:
           }
           "NOVNC_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           Write-Host "✅ noVNC web access: $url"
-          Write-Host 'The browser requires VNC_PASSWORD; VNC shows the Windows console session.'
+          if ($passwordMode -eq 'same_from_secret') {
+            Write-Host 'Use the VNC_PASSWORD repository secret in your browser (VNCAuth uses first 8 bytes).'
+          } else {
+            Write-Host 'Use the generated password displayed in this step log.'
+          }
+          Write-Host 'noVNC mirrors the Windows console; it may differ from an RDP session.'
 
       - name: ✅ Verify RDP Port
         if: inputs.remote_access != 'novnc'
@@ -2440,6 +2489,7 @@ jobs:
           $installArtCraft = '${{ inputs.install_artcraft }}' -eq 'true'
           $hostnameMode = '${{ inputs.hostname_mode }}'
           $passwordMode = '${{ inputs.rdp_password_mode }}'
+          $vncPasswordMode = '${{ inputs.vnc_password_mode }}'
           $remoteMode = '${{ inputs.remote_access }}'
           $durationHours = '${{ inputs.duration_hours }}'
           $windowsVersion = '${{ inputs.windows_version }}'
@@ -2674,7 +2724,9 @@ jobs:
             $summaryLines.Add("| noVNC browser access | Value |") | Out-Null
             $summaryLines.Add("|---|---|") | Out-Null
             $summaryLines.Add("| Web URL (Tailscale network) | [$env:NOVNC_URL]($env:NOVNC_URL) |") | Out-Null
-            $summaryLines.Add("| Browser VNC password | GitHub repository secret VNC_PASSWORD (8 letters/digits) |") | Out-Null
+            $vncLoginHelp = if ($vncPasswordMode -eq 'random_each_run') { 'Generated password in the noVNC installation step log (public repo logs are public)' } else { 'GitHub Secret VNC_PASSWORD (first 8 bytes effective)' }
+            $summaryLines.Add("| noVNC password mode | $vncPasswordMode |") | Out-Null
+            $summaryLines.Add("| Browser VNC password | $vncLoginHelp |") | Out-Null
             $summaryLines.Add("| Visible desktop | Windows console (not necessarily the separate RDP user desktop) |") | Out-Null
             $summaryLines.Add("") | Out-Null
           }
@@ -2716,7 +2768,7 @@ jobs:
             $summaryLines.Add("**RDP:** Gunakan Microsoft Remote Desktop, hostname $env:TAILSCALE_HOSTNAME (atau IP $env:TAILSCALE_IP), lalu login dengan akun $env:RDP_USER.") | Out-Null
           }
           if ($remoteMode -in @('novnc','both')) {
-            $summaryLines.Add("**noVNC:** Buka [$env:NOVNC_URL]($env:NOVNC_URL) di browser yang terhubung ke Tailscale, tekan Connect, dan masukkan secret VNC_PASSWORD.") | Out-Null
+            $summaryLines.Add("**noVNC:** Buka [$env:NOVNC_URL]($env:NOVNC_URL) di browser yang terhubung ke Tailscale, tekan Connect, dan gunakan password sesuai mode $vncPasswordMode.") | Out-Null
             $summaryLines.Add("noVNC menampilkan sesi console Windows. Jika memilih both, sesi RDP dan sesi noVNC mungkin berbeda.") | Out-Null
           }
           $summaryLines.Add("") | Out-Null
@@ -2733,7 +2785,7 @@ jobs:
           $summaryLines.Add("| MagicDNS belum resolve | Tunggu sebentar atau langsung pakai IP Tailscale |") | Out-Null
           if ($remoteMode -in @('novnc','both')) {
             $summaryLines.Add("| noVNC tidak terbuka | Periksa Tailscale client, firewall port 6080 dan log ProgramData/RDP-Setup/noVNC |") | Out-Null
-            $summaryLines.Add("| noVNC password ditolak | Gunakan secret VNC_PASSWORD, berbeda dengan Windows RDP password |") | Out-Null
+            $summaryLines.Add("| noVNC password ditolak | Untuk mode tetap gunakan VNC_PASSWORD, untuk acak lihat log step noVNC. VNCAuth memakai 8 byte pertama. |") | Out-Null
           }
           $summaryLines.Add("") | Out-Null
 
@@ -2747,6 +2799,7 @@ jobs:
         shell: pwsh
         run: |
           $passwordMode = '${{ inputs.rdp_password_mode }}'
+          $vncPasswordMode = '${{ inputs.vnc_password_mode }}'
           $remoteMode = '${{ inputs.remote_access }}'
 
           if ($passwordMode -eq "same_from_secret") {
@@ -2786,7 +2839,8 @@ jobs:
           }
           if ($remoteMode -in @('novnc','both')) {
             Write-Host "║  noVNC    : $env:NOVNC_URL"
-            Write-Host "║  VNC pass : secret VNC_PASSWORD"
+            $vncHint = if ($vncPasswordMode -eq 'same_from_secret') { 'secret VNC_PASSWORD' } else { 'generated; see noVNC step log' }
+            Write-Host "║  VNC pass : $vncHint"
           }
           Write-Host "╚══════════════════════════════════════╝"
           Write-Host ""

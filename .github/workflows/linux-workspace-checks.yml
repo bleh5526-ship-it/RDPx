@@ -150,7 +150,7 @@ jobs:
           test -s "$RUNNER_TEMP/wfs-linux/web-password"
           test "$(wc -c < "$RUNNER_TEMP/wfs-linux/rdp-password")" -eq 24
           test "$(cat "$RUNNER_TEMP/wfs-linux/web-password")" = "CI-VNC-ONLY-NOT-PRODUCTION-2026"
-          test "$WFS_HOSTNAME" = "wfs-ci-$GITHUB_RUN_ID"
+          grep -Fx "WFS_HOSTNAME=wfs-ci-$GITHUB_RUN_ID" "$GITHUB_ENV"
           echo 'PASS: two independent passwords, deterministic per-run RDP mode, hostname and preserved web secret.'
 
       - name: "🖥️ Launch Webtop and native Xorg xrdp"

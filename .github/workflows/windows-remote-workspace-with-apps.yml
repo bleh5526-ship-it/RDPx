@@ -1,8 +1,8 @@
 # 🎯 Log markers: 🚀 start | ⏭️ SKIP | 📥 download | ⚙️ install
 # ✅ success | ⚠️ warning | ❌ error | ⏱️ TIME | 🛡️ admin | 🎨 ArtCraft Launcher
 # Text labels remain searchable; machine-readable paths, IDs and secrets are unchanged.
-name: "🖥️ Windows RDP with Apps"
-run-name: "🚀 Windows RDP with Apps"
+name: "🪟 Windows Remote Workspace with Apps"
+run-name: "🚀 Windows Workspace • ${{ inputs.remote_access }} • ${{ inputs.windows_version }}"
 
 "on":
   workflow_dispatch:
@@ -26,7 +26,7 @@ run-name: "🚀 Windows RDP with Apps"
           - "windows-2025-vs2026"
 
       remote_access:
-        description: "Pilih remote: RDP / noVNC (web browser) / both"
+        description: "Metode akses: RDP, noVNC (browser), atau keduanya"
         required: true
         default: "rdp"
         type: choice
@@ -114,13 +114,13 @@ run-name: "🚀 Windows RDP with Apps"
           - "all"
 
       install_artcraft:
-        description: "Install ArtCraft Launcher v0.3.2 (pilih aplikasi suite setelah login RDP)"
+        description: "Install ArtCraft Launcher v0.3.2 (pilih aplikasi setelah masuk Windows)"
         required: true
         default: true
         type: boolean
 
       tailscale_hostname:
-        description: "Nama dasar hostname Tailscale/RDP"
+        description: "Nama hostname Tailscale untuk Windows Workspace"
         required: true
         default: "rdp-runner"
         type: string
@@ -145,7 +145,7 @@ run-name: "🚀 Windows RDP with Apps"
 
 jobs:
   secure-rdp:
-    name: 🖥️ Windows Remote Desktop
+    name: 🪟 Windows Remote Workspace (RDP / noVNC)
     runs-on: ${{ inputs.windows_version }}
     timeout-minutes: 360
 
@@ -2654,7 +2654,7 @@ jobs:
 
           $summaryLines = [System.Collections.Generic.List[string]]::new()
 
-          $summaryLines.Add("# 🪟 Windows RDP Dashboard") | Out-Null
+          $summaryLines.Add("# 🪟 Windows Remote Workspace Dashboard") | Out-Null
           $summaryLines.Add("") | Out-Null
           $summaryLines.Add("> ✅ Runner siap digunakan. Gunakan hostname sebagai alamat utama, lalu pakai IP Tailscale sebagai fallback jika MagicDNS belum resolve.") | Out-Null
           $summaryLines.Add("") | Out-Null

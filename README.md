@@ -227,6 +227,8 @@ Form workflow menyediakan pilihan IDE (VS Code/Antigravity), editor video (CapCu
 
 **ArtCraft Launcher terbaru:** workflow tidak lagi menginstal versi lama `v0.3.2`. Saat `install_artcraft=true`, installer membaca [rilis stabil terbaru dari `storytold/craft-launcher`](https://github.com/storytold/craft-launcher/releases/latest), mencari MSI Windows x64 resmi, mengunduhnya, lalu **memverifikasi SHA-256 terhadap digest aset GitHub** sebelum memasang untuk pengguna `RDP`. Versi yang didapat dicatat pada kolom **App Status** di Actions Summary. Rilis terbaru yang tersedia saat pembaruan panduan ini adalah **v0.16.1 (8 November 2026)**; run berikutnya bisa memakai versi yang lebih baru jika sudah diterbitkan. Jika API/rilis tidak dapat diverifikasi, instalasi akan gagal daripada memakai installer yang tidak tepercaya.
 
+**Perbaikan lokasi installer v0.16+:** ArtCraft Launcher kini menggunakan `%LOCALAPPDATA%\Programs\ArtCraft\Launcher\artcraft-launcher.exe`, bukan path lama `%LOCALAPPDATA%\Programs\ArtCraft Launcher\artcraft-launcher.exe`. Workflow membaca path aktual yang dicatat MSI pada registry akun `RDP` (`HKCU\Software\Learning Machines LLC\ArtCraft Launcher`, nilai `InstallDir`), serta memeriksa kedua lokasi agar instalasi baru dan upgrade lama sama-sama dikenali. Jika instalasi masih gagal, lihat log step **Install Apps in Parallel (Skip Existing)** dan `msi.log` pada direktori diagnostik `C:\ProgramData\RDP-Setup\UserTasks\RdpSetup-ArtCraft-*`.
+
 Ketersediaan setiap aplikasi bergantung pada image Windows, installer, dan hasil langkah instalasi. Periksa tabel **App Status** pada Actions Summary; jangan menganggap semua aplikasi berhasil hanya karena workflow mencapai tahap Remote READY.
 
 ## 🔒 Keamanan dan batasan

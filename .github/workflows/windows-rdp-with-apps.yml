@@ -242,12 +242,12 @@ jobs:
 
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
 
-          # Do not publish native RDP to the tailnet in noVNC-only mode.
+          # Do not publish native RDP over Tailscale in noVNC-only mode.
           if ('${{ inputs.remote_access }}' -ne 'novnc') {
             netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389 remoteip=100.64.0.0/10 profile=any
             if ($LASTEXITCODE -ne 0) { throw "❌ Failed to create the Tailscale-only RDP firewall rule." }
           } else {
-            Write-Host "⏭️ RDP firewall rule disabled (noVNC only). "
+            Write-Host "⏭️ RDP inbound rule skipped for noVNC-only mode."
           }
 
           Restart-Service -Name TermService -Force
@@ -2299,809 +2299,33 @@ jobs:
           VNC_PASSWORD_SECRET: ${{ secrets.VNC_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
+          # VNC's classic authentication handles at most 8 password bytes.
           $vncPassword = [string]$env:VNC_PASSWORD_SECRET
-          if ($vncPassword -cnotmatch '^[A-Za-z0-9]{8}        if: inputs.remote_access != 'novnc'
-        shell: pwsh
-        run: |
-          Write-Host "Verifying RDP port..."
-
-          $result = Test-NetConnection `
-            -ComputerName $env:TAILSCALE_IP `
-            -Port 3389 `
-            -WarningAction SilentlyContinue
-
-          if (-not $result.TcpTestSucceeded) {
-            Write-Error "❌ RDP port 3389 unreachable"
-            exit 1
-          }
-
-          Write-Host "✅ RDP port verified"
-
-      - name: 📊 Generate Dashboard Summary
-        shell: pwsh
-        run: |
-          $ideChoice = '${{ inputs.ide_choice }}'
-          $editorChoice = '${{ inputs.editor_choice }}'
-          $metatraderChoice = '${{ inputs.metatrader_choice }}'
-          $routerChoice = '${{ inputs.router_choice }}'
-          $codingAgentChoice = '${{ inputs.coding_agent_choice }}'
-          $aiAgentChoice = '${{ inputs.ai_agent_choice }}'
-          $installArtCraft = '${{ inputs.install_artcraft }}' -eq 'true'
-          $hostnameMode = '${{ inputs.hostname_mode }}'
-          $passwordMode = '${{ inputs.rdp_password_mode }}'
-          $durationHours = '${{ inputs.duration_hours }}'
-          $windowsVersion = '${{ inputs.windows_version }}'
-
-          function Test-AnyPath {
-            param([string[]] $Paths)
-
-            foreach ($path in $Paths) {
-              if ([string]::IsNullOrWhiteSpace($path)) { continue }
-
-              $expanded = [Environment]::ExpandEnvironmentVariables($path)
-              if (Test-Path $expanded) {
-                return $true
-              }
-            }
-
-            return $false
-          }
-
-          function Test-CommandExists {
-            param([string] $Name)
-
-            $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-            return [bool]$cmd
-          }
-
-          function Get-InstallStatus {
-            param(
-              [bool] $Requested,
-              [bool] $Detected
-            )
-
-            if (-not $Requested) {
-              return "⏭️ Skipped"
-            }
-
-            if ($Detected) {
-              return "✅ Ready"
-            }
-
-            return "⚠️ Check logs"
-          }
-
-          function Add-Row {
-            param(
-              [System.Collections.Generic.List[string]] $Rows,
-              [string] $Col1,
-              [string] $Col2,
-              [string] $Col3 = ""
-            )
-
-            $Rows.Add("| $Col1 | $Col2 | $Col3 |") | Out-Null
-          }
-
-          if ($passwordMode -eq "same_from_secret") {
-            $passwordDisplay = "Use GitHub Secret ``RDP_PASSWORD``"
-          } else {
-            $passwordDisplay = "``$env:RDP_PASSWORD``"
-          }
-
-          $wantedVSCode = $ideChoice -in @("vscode", "both")
-          $wantedAntigravity = $ideChoice -in @("antigravity", "both")
-          $wantedCapCut = $editorChoice -in @("capcut", "both")
-          $wantedShotcut = $editorChoice -in @("shotcut", "both")
-          $wantedMT4 = $metatraderChoice -in @("mt4", "both")
-          $wantedMT5 = $metatraderChoice -in @("mt5", "both")
-          $wanted9Router = $routerChoice -in @("9router", "both")
-          $wantedOmniRoute = $routerChoice -in @("omniroute", "both")
-          $wantedCodex = $codingAgentChoice -in @("codex", "both")
-          $wantedClaude = $codingAgentChoice -in @("claude", "both")
-          $wantedHermes = $aiAgentChoice -in @("hermes", "both", "all")
-          $wantedOpenClaw = $aiAgentChoice -in @("openclaw", "both", "all")
-          $wantedOpenCode = $aiAgentChoice -in @("opencode", "all")
-
-          $chromeDetected = Test-AnyPath @(
-            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
-            "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
-          )
-
-          $winrarDetected = Test-AnyPath @(
-            "$env:ProgramFiles\WinRAR\WinRAR.exe",
-            "${env:ProgramFiles(x86)}\WinRAR\WinRAR.exe"
-          )
-
-          $nodeDetected = Test-AnyPath @(
-            "$env:ProgramFiles\nodejs\node.exe",
-            "${env:ProgramFiles(x86)}\nodejs\node.exe"
-          )
-
-          $vscodeDetected = Test-AnyPath @(
-            "$env:ProgramFiles\Microsoft VS Code\Code.exe",
-            "${env:ProgramFiles(x86)}\Microsoft VS Code\Code.exe",
-            "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"
-          )
-
-          $antigravityDetected = Test-AnyPath @(
-            "$env:LOCALAPPDATA\Programs\Antigravity IDE\Antigravity IDE.exe",
-            "$env:LOCALAPPDATA\Antigravity IDE\Antigravity IDE.exe",
-            "C:\Users\runneradmin\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.exe",
-            "$env:ProgramFiles\Antigravity IDE\Antigravity IDE.exe",
-            "${env:ProgramFiles(x86)}\Antigravity IDE\Antigravity IDE.exe",
-            "$env:ProgramData\RDP-Setup\Antigravity IDE\Antigravity IDE.exe"
-          )
-
-          $capCutDetected = Test-AnyPath @($env:CAPCUT_EXE)
-
-          $shotcutDetected = Test-AnyPath @(
-            "$env:ProgramFiles\Shotcut\shotcut.exe",
-            "${env:ProgramFiles(x86)}\Shotcut\shotcut.exe",
-            "$env:LOCALAPPDATA\Programs\Shotcut\shotcut.exe"
-          )
-
-          $mt4Detected = Test-AnyPath @(
-            "$env:ProgramFiles\MetaTrader 4\terminal.exe",
-            "${env:ProgramFiles(x86)}\MetaTrader 4\terminal.exe"
-          )
-
-          $mt5Detected = Test-AnyPath @(
-            "$env:ProgramFiles\MetaTrader 5\terminal64.exe",
-            "$env:ProgramFiles\MetaTrader 5\terminal.exe",
-            "${env:ProgramFiles(x86)}\MetaTrader 5\terminal.exe"
-          )
-
-          $codexDetected = Test-AnyPath @($env:CODEX_EXE)
-
-          $claudeDetected = Test-AnyPath @($env:CLAUDE_EXE)
-
-          $nineRouterDetected = (Test-CommandExists "9router") -or (Test-AnyPath @(
-            "$env:APPDATA\npm\9router.cmd",
-            "$env:ProgramFiles\nodejs\9router.cmd",
-            "${env:ProgramFiles(x86)}\nodejs\9router.cmd"
-          ))
-
-          $omniRouteDetected = (Test-CommandExists "omniroute") -or (Test-AnyPath @(
-            "$env:APPDATA\npm\omniroute.cmd",
-            "$env:ProgramFiles\nodejs\omniroute.cmd",
-            "${env:ProgramFiles(x86)}\nodejs\omniroute.cmd"
-          ))
-
-          $hermesDetected = (Test-CommandExists "hermes") -or (Test-AnyPath @(
-            "$env:LOCALAPPDATA\hermes\bin\hermes.exe",
-            "$env:LOCALAPPDATA\hermes\bin\hermes.cmd"
-          ))
-
-          $openclawDetected = (Test-CommandExists "openclaw") -or (Test-AnyPath @(
-            "$env:APPDATA\npm\openclaw.cmd",
-            "$env:ProgramFiles\nodejs\openclaw.cmd",
-            "${env:ProgramFiles(x86)}\nodejs\openclaw.cmd"
-          ))
-
-          $openCodeDetected = (Test-CommandExists "opencode") -or (Test-AnyPath @(
-            "$env:APPDATA\npm\opencode.cmd",
-            "$env:ProgramFiles\nodejs\opencode.cmd",
-            "${env:ProgramFiles(x86)}\nodejs\opencode.cmd"
-          ))
-
-          $artCraftDetected = (Test-AnyPath @(
-            "$env:SystemDrive\Users\$env:RDP_USER\AppData\Local\Programs\ArtCraft Launcher\artcraft-launcher.exe",
-            $env:ARTCRAFT_EXE
-          ))
-
-          $chromeDefaultPolicy = $false
-          try {
-            $policy = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -Name 'DefaultAssociationsConfiguration' -ErrorAction Stop
-            $chromeDefaultPolicy = [bool]$policy.DefaultAssociationsConfiguration
-          } catch {
-            $chromeDefaultPolicy = $false
-          }
-
-          $appRows = [System.Collections.Generic.List[string]]::new()
-          $appRows.Add("| Application | Status | Notes |") | Out-Null
-          $appRows.Add("|---|---:|---|") | Out-Null
-
-          Add-Row $appRows "Google Chrome" (Get-InstallStatus $true $chromeDetected) "Installed; default association policy: $chromeDefaultPolicy"
-          Add-Row $appRows "WinRAR" (Get-InstallStatus $true $winrarDetected) "Archive manager"
-          Add-Row $appRows "Node.js LTS" (Get-InstallStatus $true $nodeDetected) "Runtime for npm-based apps"
-          Add-Row $appRows "Visual Studio Code" (Get-InstallStatus $wantedVSCode $vscodeDetected) "Optional IDE"
-          Add-Row $appRows "Antigravity IDE" (Get-InstallStatus $wantedAntigravity $antigravityDetected) "Optional IDE; prepared for RDP user"
-          Add-Row $appRows "CapCut" (Get-InstallStatus $wantedCapCut $capCutDetected) "Per-user CapCut; binary checked for RDP"
-          Add-Row $appRows "Shotcut" (Get-InstallStatus $wantedShotcut $shotcutDetected) "Optional video editor"
-          Add-Row $appRows "MetaTrader 4" (Get-InstallStatus $wantedMT4 $mt4Detected) "Optional trading terminal"
-          Add-Row $appRows "MetaTrader 5" (Get-InstallStatus $wantedMT5 $mt5Detected) "Optional trading terminal"
-          Add-Row $appRows "Codex CLI" (Get-InstallStatus $wantedCodex $codexDetected) "npm package ``@openai/codex``"
-          Add-Row $appRows "Claude Code" (Get-InstallStatus $wantedClaude $claudeDetected) "Official PowerShell installer"
-          Add-Row $appRows "9Router CLI" (Get-InstallStatus $wanted9Router $nineRouterDetected) "npm package ``9router``"
-          Add-Row $appRows "OmniRoute CLI" (Get-InstallStatus $wantedOmniRoute $omniRouteDetected) "npm package ``omniroute``"
-          Add-Row $appRows "Hermes Agent" (Get-InstallStatus $wantedHermes $hermesDetected) "Official non-interactive installer"
-          Add-Row $appRows "OpenClaw" (Get-InstallStatus $wantedOpenClaw $openclawDetected) "Official installer; onboarding skipped"
-          Add-Row $appRows "OpenCode" (Get-InstallStatus $wantedOpenCode $openCodeDetected) "npm package ``opencode-ai``"
-          Add-Row $appRows "ArtCraft Launcher" (Get-InstallStatus $installArtCraft $artCraftDetected) "Official v0.3.2 MSI; choose suite apps inside launcher"
-
-          $extensionRows = [System.Collections.Generic.List[string]]::new()
-          $extensionRows.Add("| Target | Extension / Feature | Status |") | Out-Null
-          $extensionRows.Add("|---|---|---:|") | Out-Null
-
-          if ($wantedVSCode) {
-            Add-Row $extensionRows "VS Code" "OpenAI / Codex extension ``OpenAI.chatgpt``" "✅ Configured"
-            Add-Row $extensionRows "VS Code" "Office Viewer ``cweijan.vscode-office``" "✅ Configured"
-          } else {
-            Add-Row $extensionRows "VS Code" "OpenAI + Office Viewer extensions" "⏭️ Skipped"
-          }
-
-          if ($wantedAntigravity) {
-            Add-Row $extensionRows "Antigravity" "OpenAI + Office Viewer extensions" "✅ Best effort"
-          } else {
-            Add-Row $extensionRows "Antigravity" "OpenAI + Office Viewer extensions" "⏭️ Skipped"
-          }
-
-          Add-Row $extensionRows "Chrome" "Cookie-Editor + GoFullPage" "Policy configured"
-          $chromePolicyStatus = if ($chromeDefaultPolicy) { "Policy configured" } else { "Check logs" }
-          Add-Row $extensionRows "Windows" "Chrome default browser associations" $chromePolicyStatus
-
-          $summaryLines = [System.Collections.Generic.List[string]]::new()
-
-          $summaryLines.Add("# 🪟 Windows RDP Dashboard") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("> ✅ Runner siap digunakan. Gunakan hostname sebagai alamat utama, lalu pakai IP Tailscale sebagai fallback jika MagicDNS belum resolve.") | Out-Null
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🎯 Recommended Login") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("| Use this | Value |") | Out-Null
-          $summaryLines.Add("|---|---|") | Out-Null
-          $summaryLines.Add("| Primary address | ``$env:TAILSCALE_HOSTNAME`` |") | Out-Null
-          $summaryLines.Add("| Fallback address | ``$env:TAILSCALE_IP`` |") | Out-Null
-          $summaryLines.Add("| Username | ``$env:RDP_USER`` |") | Out-Null
-          $summaryLines.Add("| Password | $passwordDisplay |") | Out-Null
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🔗 Connection Details") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("| Item | Value |") | Out-Null
-          $summaryLines.Add("|---|---|") | Out-Null
-          $summaryLines.Add("| OS / Runner | ``$windowsVersion`` |") | Out-Null
-          $summaryLines.Add("| Tailscale Hostname | ``$env:TAILSCALE_HOSTNAME`` |") | Out-Null
-          $summaryLines.Add("| Tailscale IP | ``$env:TAILSCALE_IP`` |") | Out-Null
-          $summaryLines.Add("| Hostname Mode | ``$hostnameMode`` |") | Out-Null
-          $summaryLines.Add("| Password Mode | ``$passwordMode`` |") | Out-Null
-          $summaryLines.Add("| Runtime Duration | ``$durationHours hour(s)`` |") | Out-Null
-          $summaryLines.Add("| IDE Choice | ``$ideChoice`` |") | Out-Null
-          $summaryLines.Add("| Video Editor Choice | ``$editorChoice`` |") | Out-Null
-          $summaryLines.Add("| MetaTrader Choice | ``$metatraderChoice`` |") | Out-Null
-          $summaryLines.Add("| Router Choice | ``$routerChoice`` |") | Out-Null
-          $summaryLines.Add("| Coding Agent Choice | ``$codingAgentChoice`` |") | Out-Null
-          $summaryLines.Add("| AI Agent Choice | ``$aiAgentChoice`` |") | Out-Null
-          $summaryLines.Add("| ArtCraft Launcher Enabled | ``$installArtCraft`` |") | Out-Null
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 📦 App Status") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          foreach ($line in $appRows) { $summaryLines.Add($line) | Out-Null }
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🧩 Extensions & Policies") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          foreach ($line in $extensionRows) { $summaryLines.Add($line) | Out-Null }
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🚀 How to Connect") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("1. Buka **Microsoft Remote Desktop** di perangkat kamu.") | Out-Null
-          $summaryLines.Add("2. Pastikan perangkat kamu sudah login ke **Tailscale tailnet yang sama**.") | Out-Null
-          $summaryLines.Add("3. Masukkan **Primary address**: ``$env:TAILSCALE_HOSTNAME``.") | Out-Null
-          $summaryLines.Add("4. Jika hostname belum connect, pakai **Fallback address**: ``$env:TAILSCALE_IP``.") | Out-Null
-          $summaryLines.Add("5. Login dengan username ``$env:RDP_USER`` dan password di bagian Recommended Login.") | Out-Null
-          $summaryLines.Add("6. Buka IDE dari Desktop atau Start Menu setelah masuk RDP.") | Out-Null
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🧯 Troubleshooting") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("| Problem | Try this |") | Out-Null
-          $summaryLines.Add("|---|---|") | Out-Null
-          $summaryLines.Add("| Hostname tidak bisa connect | Pakai IP Tailscale fallback ``$env:TAILSCALE_IP`` |") | Out-Null
-          $summaryLines.Add("| Password ditolak | Cek ``rdp_password_mode``; jika ``same_from_secret``, gunakan secret ``RDP_PASSWORD`` |") | Out-Null
-          $summaryLines.Add("| VS Code tidak terbuka | Buka dari Start Menu, atau cek status ``Visual Studio Code`` di tabel App Status |") | Out-Null
-          $summaryLines.Add("| Antigravity belum muncul | Login ulang ke user RDP atau buka shortcut Antigravity; workflow menyiapkan copy per-user |") | Out-Null
-          $summaryLines.Add("| RDP timeout | Pastikan device lokal sudah connect ke Tailscale dan berada di tailnet yang sama |") | Out-Null
-          $summaryLines.Add("| MagicDNS belum resolve | Tunggu sebentar atau langsung pakai IP Tailscale |") | Out-Null
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🧹 Cleanup") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("Saat runtime selesai, gagal, atau workflow masuk cleanup, step terakhir akan mencoba menjalankan ``tailscale logout`` otomatis.") | Out-Null
-
-          $summaryLines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-      - name: ⏳ Show Access Info & Keep Alive
-        shell: pwsh
-        run: |
-          $passwordMode = '${{ inputs.rdp_password_mode }}'
-
-          if ($passwordMode -eq "same_from_secret") {
-            $passwordForDisplay = "Use GitHub Secret RDP_PASSWORD"
-          } else {
-            $passwordForDisplay = $env:RDP_PASSWORD
-          }
-
-          function Logout-TailscaleSafely {
-            $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-
-            if (Test-Path $tsExe) {
-              Write-Host "Logging out from Tailscale..."
-              & $tsExe logout
-
-              if ($LASTEXITCODE -eq 0) {
-                Write-Host "✅ Tailscale logout completed"
-              } else {
-                Write-Warning "⚠️ Tailscale logout returned exit code $LASTEXITCODE"
-              }
-            } else {
-              Write-Host "tailscale.exe not found. Skipping logout."
-            }
-          }
-
-          Write-Host ""
-          Write-Host "╔══════════════════════════════════════╗"
-          Write-Host "║          WINDOWS RDP READY           ║"
-          Write-Host "╠══════════════════════════════════════╣"
-          Write-Host "║  Hostname : $env:TAILSCALE_HOSTNAME"
-          Write-Host "║  IP       : $env:TAILSCALE_IP"
-          Write-Host "║  Username : $env:RDP_USER"
-          Write-Host "║  Password : $passwordForDisplay"
-          Write-Host "╚══════════════════════════════════════╝"
-          Write-Host ""
-
-          try {
-            $hours = [int]'${{ inputs.duration_hours }}'
-            $seconds = $hours * 3600
-            $elapsed = 0
-
-            while ($elapsed -lt $seconds) {
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] ✅ Session active - elapsed $elapsed seconds"
-              Start-Sleep -Seconds 300
-              $elapsed += 300
-            }
-
-            Write-Host "Session completed."
-          } finally {
-            Logout-TailscaleSafely
-          }
-
-      - name: 🧹 Cleanup Tailscale Logout
-        if: always()
-        shell: pwsh
-        run: |
-          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-
-          if (Test-Path $tsExe) {
-            Write-Host "Running final Tailscale cleanup/logout..."
-            & $tsExe logout
-
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "✅ Final Tailscale logout completed"
-            } else {
-              Write-Warning "⚠️ Final Tailscale logout returned exit code $LASTEXITCODE"
-            }
-          } else {
-            Write-Host "tailscale.exe not found. Skipping final cleanup."
-          }
-) {
-            throw 'Set repository secret VNC_PASSWORD to exactly 8 ASCII letters or digits for noVNC mode.'
+          if ($vncPassword -cnotmatch '^[A-Za-z0-9]{8}$') {
+            throw 'Set GitHub repository secret VNC_PASSWORD to exactly 8 ASCII letters/digits.'
           }
           Write-Host "::add-mask::$vncPassword"
-
           if ($env:RUNNER_ARCH -eq 'ARM64') {
-            throw 'noVNC requires x64 Windows. Use an x64 runner or remote_access=rdp on ARM64.'
+            throw 'noVNC is not supported for Windows ARM64 runners. Select x64 or use RDP.'
           }
           if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
-            throw 'noVNC setup only supports a disposable GitHub-hosted Windows runner.'
+            throw 'noVNC mode requires a disposable GitHub-hosted runner.'
           }
-          if ($env:TAILSCALE_IP -notmatch '^100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.\d{1,3}\.\d{1,3}        if: inputs.remote_access != 'novnc'
-        shell: pwsh
-        run: |
-          Write-Host "Verifying RDP port..."
-
-          $result = Test-NetConnection `
-            -ComputerName $env:TAILSCALE_IP `
-            -Port 3389 `
-            -WarningAction SilentlyContinue
-
-          if (-not $result.TcpTestSucceeded) {
-            Write-Error "❌ RDP port 3389 unreachable"
-            exit 1
-          }
-
-          Write-Host "✅ RDP port verified"
-
-      - name: 📊 Generate Dashboard Summary
-        shell: pwsh
-        run: |
-          $ideChoice = '${{ inputs.ide_choice }}'
-          $editorChoice = '${{ inputs.editor_choice }}'
-          $metatraderChoice = '${{ inputs.metatrader_choice }}'
-          $routerChoice = '${{ inputs.router_choice }}'
-          $codingAgentChoice = '${{ inputs.coding_agent_choice }}'
-          $aiAgentChoice = '${{ inputs.ai_agent_choice }}'
-          $installArtCraft = '${{ inputs.install_artcraft }}' -eq 'true'
-          $hostnameMode = '${{ inputs.hostname_mode }}'
-          $passwordMode = '${{ inputs.rdp_password_mode }}'
-          $durationHours = '${{ inputs.duration_hours }}'
-          $windowsVersion = '${{ inputs.windows_version }}'
-
-          function Test-AnyPath {
-            param([string[]] $Paths)
-
-            foreach ($path in $Paths) {
-              if ([string]::IsNullOrWhiteSpace($path)) { continue }
-
-              $expanded = [Environment]::ExpandEnvironmentVariables($path)
-              if (Test-Path $expanded) {
-                return $true
-              }
-            }
-
-            return $false
-          }
-
-          function Test-CommandExists {
-            param([string] $Name)
-
-            $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-            return [bool]$cmd
-          }
-
-          function Get-InstallStatus {
-            param(
-              [bool] $Requested,
-              [bool] $Detected
-            )
-
-            if (-not $Requested) {
-              return "⏭️ Skipped"
-            }
-
-            if ($Detected) {
-              return "✅ Ready"
-            }
-
-            return "⚠️ Check logs"
-          }
-
-          function Add-Row {
-            param(
-              [System.Collections.Generic.List[string]] $Rows,
-              [string] $Col1,
-              [string] $Col2,
-              [string] $Col3 = ""
-            )
-
-            $Rows.Add("| $Col1 | $Col2 | $Col3 |") | Out-Null
-          }
-
-          if ($passwordMode -eq "same_from_secret") {
-            $passwordDisplay = "Use GitHub Secret ``RDP_PASSWORD``"
-          } else {
-            $passwordDisplay = "``$env:RDP_PASSWORD``"
-          }
-
-          $wantedVSCode = $ideChoice -in @("vscode", "both")
-          $wantedAntigravity = $ideChoice -in @("antigravity", "both")
-          $wantedCapCut = $editorChoice -in @("capcut", "both")
-          $wantedShotcut = $editorChoice -in @("shotcut", "both")
-          $wantedMT4 = $metatraderChoice -in @("mt4", "both")
-          $wantedMT5 = $metatraderChoice -in @("mt5", "both")
-          $wanted9Router = $routerChoice -in @("9router", "both")
-          $wantedOmniRoute = $routerChoice -in @("omniroute", "both")
-          $wantedCodex = $codingAgentChoice -in @("codex", "both")
-          $wantedClaude = $codingAgentChoice -in @("claude", "both")
-          $wantedHermes = $aiAgentChoice -in @("hermes", "both", "all")
-          $wantedOpenClaw = $aiAgentChoice -in @("openclaw", "both", "all")
-          $wantedOpenCode = $aiAgentChoice -in @("opencode", "all")
-
-          $chromeDetected = Test-AnyPath @(
-            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
-            "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
-          )
-
-          $winrarDetected = Test-AnyPath @(
-            "$env:ProgramFiles\WinRAR\WinRAR.exe",
-            "${env:ProgramFiles(x86)}\WinRAR\WinRAR.exe"
-          )
-
-          $nodeDetected = Test-AnyPath @(
-            "$env:ProgramFiles\nodejs\node.exe",
-            "${env:ProgramFiles(x86)}\nodejs\node.exe"
-          )
-
-          $vscodeDetected = Test-AnyPath @(
-            "$env:ProgramFiles\Microsoft VS Code\Code.exe",
-            "${env:ProgramFiles(x86)}\Microsoft VS Code\Code.exe",
-            "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"
-          )
-
-          $antigravityDetected = Test-AnyPath @(
-            "$env:LOCALAPPDATA\Programs\Antigravity IDE\Antigravity IDE.exe",
-            "$env:LOCALAPPDATA\Antigravity IDE\Antigravity IDE.exe",
-            "C:\Users\runneradmin\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.exe",
-            "$env:ProgramFiles\Antigravity IDE\Antigravity IDE.exe",
-            "${env:ProgramFiles(x86)}\Antigravity IDE\Antigravity IDE.exe",
-            "$env:ProgramData\RDP-Setup\Antigravity IDE\Antigravity IDE.exe"
-          )
-
-          $capCutDetected = Test-AnyPath @($env:CAPCUT_EXE)
-
-          $shotcutDetected = Test-AnyPath @(
-            "$env:ProgramFiles\Shotcut\shotcut.exe",
-            "${env:ProgramFiles(x86)}\Shotcut\shotcut.exe",
-            "$env:LOCALAPPDATA\Programs\Shotcut\shotcut.exe"
-          )
-
-          $mt4Detected = Test-AnyPath @(
-            "$env:ProgramFiles\MetaTrader 4\terminal.exe",
-            "${env:ProgramFiles(x86)}\MetaTrader 4\terminal.exe"
-          )
-
-          $mt5Detected = Test-AnyPath @(
-            "$env:ProgramFiles\MetaTrader 5\terminal64.exe",
-            "$env:ProgramFiles\MetaTrader 5\terminal.exe",
-            "${env:ProgramFiles(x86)}\MetaTrader 5\terminal.exe"
-          )
-
-          $codexDetected = Test-AnyPath @($env:CODEX_EXE)
-
-          $claudeDetected = Test-AnyPath @($env:CLAUDE_EXE)
-
-          $nineRouterDetected = (Test-CommandExists "9router") -or (Test-AnyPath @(
-            "$env:APPDATA\npm\9router.cmd",
-            "$env:ProgramFiles\nodejs\9router.cmd",
-            "${env:ProgramFiles(x86)}\nodejs\9router.cmd"
-          ))
-
-          $omniRouteDetected = (Test-CommandExists "omniroute") -or (Test-AnyPath @(
-            "$env:APPDATA\npm\omniroute.cmd",
-            "$env:ProgramFiles\nodejs\omniroute.cmd",
-            "${env:ProgramFiles(x86)}\nodejs\omniroute.cmd"
-          ))
-
-          $hermesDetected = (Test-CommandExists "hermes") -or (Test-AnyPath @(
-            "$env:LOCALAPPDATA\hermes\bin\hermes.exe",
-            "$env:LOCALAPPDATA\hermes\bin\hermes.cmd"
-          ))
-
-          $openclawDetected = (Test-CommandExists "openclaw") -or (Test-AnyPath @(
-            "$env:APPDATA\npm\openclaw.cmd",
-            "$env:ProgramFiles\nodejs\openclaw.cmd",
-            "${env:ProgramFiles(x86)}\nodejs\openclaw.cmd"
-          ))
-
-          $openCodeDetected = (Test-CommandExists "opencode") -or (Test-AnyPath @(
-            "$env:APPDATA\npm\opencode.cmd",
-            "$env:ProgramFiles\nodejs\opencode.cmd",
-            "${env:ProgramFiles(x86)}\nodejs\opencode.cmd"
-          ))
-
-          $artCraftDetected = (Test-AnyPath @(
-            "$env:SystemDrive\Users\$env:RDP_USER\AppData\Local\Programs\ArtCraft Launcher\artcraft-launcher.exe",
-            $env:ARTCRAFT_EXE
-          ))
-
-          $chromeDefaultPolicy = $false
-          try {
-            $policy = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -Name 'DefaultAssociationsConfiguration' -ErrorAction Stop
-            $chromeDefaultPolicy = [bool]$policy.DefaultAssociationsConfiguration
-          } catch {
-            $chromeDefaultPolicy = $false
-          }
-
-          $appRows = [System.Collections.Generic.List[string]]::new()
-          $appRows.Add("| Application | Status | Notes |") | Out-Null
-          $appRows.Add("|---|---:|---|") | Out-Null
-
-          Add-Row $appRows "Google Chrome" (Get-InstallStatus $true $chromeDetected) "Installed; default association policy: $chromeDefaultPolicy"
-          Add-Row $appRows "WinRAR" (Get-InstallStatus $true $winrarDetected) "Archive manager"
-          Add-Row $appRows "Node.js LTS" (Get-InstallStatus $true $nodeDetected) "Runtime for npm-based apps"
-          Add-Row $appRows "Visual Studio Code" (Get-InstallStatus $wantedVSCode $vscodeDetected) "Optional IDE"
-          Add-Row $appRows "Antigravity IDE" (Get-InstallStatus $wantedAntigravity $antigravityDetected) "Optional IDE; prepared for RDP user"
-          Add-Row $appRows "CapCut" (Get-InstallStatus $wantedCapCut $capCutDetected) "Per-user CapCut; binary checked for RDP"
-          Add-Row $appRows "Shotcut" (Get-InstallStatus $wantedShotcut $shotcutDetected) "Optional video editor"
-          Add-Row $appRows "MetaTrader 4" (Get-InstallStatus $wantedMT4 $mt4Detected) "Optional trading terminal"
-          Add-Row $appRows "MetaTrader 5" (Get-InstallStatus $wantedMT5 $mt5Detected) "Optional trading terminal"
-          Add-Row $appRows "Codex CLI" (Get-InstallStatus $wantedCodex $codexDetected) "npm package ``@openai/codex``"
-          Add-Row $appRows "Claude Code" (Get-InstallStatus $wantedClaude $claudeDetected) "Official PowerShell installer"
-          Add-Row $appRows "9Router CLI" (Get-InstallStatus $wanted9Router $nineRouterDetected) "npm package ``9router``"
-          Add-Row $appRows "OmniRoute CLI" (Get-InstallStatus $wantedOmniRoute $omniRouteDetected) "npm package ``omniroute``"
-          Add-Row $appRows "Hermes Agent" (Get-InstallStatus $wantedHermes $hermesDetected) "Official non-interactive installer"
-          Add-Row $appRows "OpenClaw" (Get-InstallStatus $wantedOpenClaw $openclawDetected) "Official installer; onboarding skipped"
-          Add-Row $appRows "OpenCode" (Get-InstallStatus $wantedOpenCode $openCodeDetected) "npm package ``opencode-ai``"
-          Add-Row $appRows "ArtCraft Launcher" (Get-InstallStatus $installArtCraft $artCraftDetected) "Official v0.3.2 MSI; choose suite apps inside launcher"
-
-          $extensionRows = [System.Collections.Generic.List[string]]::new()
-          $extensionRows.Add("| Target | Extension / Feature | Status |") | Out-Null
-          $extensionRows.Add("|---|---|---:|") | Out-Null
-
-          if ($wantedVSCode) {
-            Add-Row $extensionRows "VS Code" "OpenAI / Codex extension ``OpenAI.chatgpt``" "✅ Configured"
-            Add-Row $extensionRows "VS Code" "Office Viewer ``cweijan.vscode-office``" "✅ Configured"
-          } else {
-            Add-Row $extensionRows "VS Code" "OpenAI + Office Viewer extensions" "⏭️ Skipped"
-          }
-
-          if ($wantedAntigravity) {
-            Add-Row $extensionRows "Antigravity" "OpenAI + Office Viewer extensions" "✅ Best effort"
-          } else {
-            Add-Row $extensionRows "Antigravity" "OpenAI + Office Viewer extensions" "⏭️ Skipped"
-          }
-
-          Add-Row $extensionRows "Chrome" "Cookie-Editor + GoFullPage" "Policy configured"
-          $chromePolicyStatus = if ($chromeDefaultPolicy) { "Policy configured" } else { "Check logs" }
-          Add-Row $extensionRows "Windows" "Chrome default browser associations" $chromePolicyStatus
-
-          $summaryLines = [System.Collections.Generic.List[string]]::new()
-
-          $summaryLines.Add("# 🪟 Windows RDP Dashboard") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("> ✅ Runner siap digunakan. Gunakan hostname sebagai alamat utama, lalu pakai IP Tailscale sebagai fallback jika MagicDNS belum resolve.") | Out-Null
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🎯 Recommended Login") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("| Use this | Value |") | Out-Null
-          $summaryLines.Add("|---|---|") | Out-Null
-          $summaryLines.Add("| Primary address | ``$env:TAILSCALE_HOSTNAME`` |") | Out-Null
-          $summaryLines.Add("| Fallback address | ``$env:TAILSCALE_IP`` |") | Out-Null
-          $summaryLines.Add("| Username | ``$env:RDP_USER`` |") | Out-Null
-          $summaryLines.Add("| Password | $passwordDisplay |") | Out-Null
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🔗 Connection Details") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("| Item | Value |") | Out-Null
-          $summaryLines.Add("|---|---|") | Out-Null
-          $summaryLines.Add("| OS / Runner | ``$windowsVersion`` |") | Out-Null
-          $summaryLines.Add("| Tailscale Hostname | ``$env:TAILSCALE_HOSTNAME`` |") | Out-Null
-          $summaryLines.Add("| Tailscale IP | ``$env:TAILSCALE_IP`` |") | Out-Null
-          $summaryLines.Add("| Hostname Mode | ``$hostnameMode`` |") | Out-Null
-          $summaryLines.Add("| Password Mode | ``$passwordMode`` |") | Out-Null
-          $summaryLines.Add("| Runtime Duration | ``$durationHours hour(s)`` |") | Out-Null
-          $summaryLines.Add("| IDE Choice | ``$ideChoice`` |") | Out-Null
-          $summaryLines.Add("| Video Editor Choice | ``$editorChoice`` |") | Out-Null
-          $summaryLines.Add("| MetaTrader Choice | ``$metatraderChoice`` |") | Out-Null
-          $summaryLines.Add("| Router Choice | ``$routerChoice`` |") | Out-Null
-          $summaryLines.Add("| Coding Agent Choice | ``$codingAgentChoice`` |") | Out-Null
-          $summaryLines.Add("| AI Agent Choice | ``$aiAgentChoice`` |") | Out-Null
-          $summaryLines.Add("| ArtCraft Launcher Enabled | ``$installArtCraft`` |") | Out-Null
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 📦 App Status") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          foreach ($line in $appRows) { $summaryLines.Add($line) | Out-Null }
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🧩 Extensions & Policies") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          foreach ($line in $extensionRows) { $summaryLines.Add($line) | Out-Null }
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🚀 How to Connect") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("1. Buka **Microsoft Remote Desktop** di perangkat kamu.") | Out-Null
-          $summaryLines.Add("2. Pastikan perangkat kamu sudah login ke **Tailscale tailnet yang sama**.") | Out-Null
-          $summaryLines.Add("3. Masukkan **Primary address**: ``$env:TAILSCALE_HOSTNAME``.") | Out-Null
-          $summaryLines.Add("4. Jika hostname belum connect, pakai **Fallback address**: ``$env:TAILSCALE_IP``.") | Out-Null
-          $summaryLines.Add("5. Login dengan username ``$env:RDP_USER`` dan password di bagian Recommended Login.") | Out-Null
-          $summaryLines.Add("6. Buka IDE dari Desktop atau Start Menu setelah masuk RDP.") | Out-Null
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🧯 Troubleshooting") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("| Problem | Try this |") | Out-Null
-          $summaryLines.Add("|---|---|") | Out-Null
-          $summaryLines.Add("| Hostname tidak bisa connect | Pakai IP Tailscale fallback ``$env:TAILSCALE_IP`` |") | Out-Null
-          $summaryLines.Add("| Password ditolak | Cek ``rdp_password_mode``; jika ``same_from_secret``, gunakan secret ``RDP_PASSWORD`` |") | Out-Null
-          $summaryLines.Add("| VS Code tidak terbuka | Buka dari Start Menu, atau cek status ``Visual Studio Code`` di tabel App Status |") | Out-Null
-          $summaryLines.Add("| Antigravity belum muncul | Login ulang ke user RDP atau buka shortcut Antigravity; workflow menyiapkan copy per-user |") | Out-Null
-          $summaryLines.Add("| RDP timeout | Pastikan device lokal sudah connect ke Tailscale dan berada di tailnet yang sama |") | Out-Null
-          $summaryLines.Add("| MagicDNS belum resolve | Tunggu sebentar atau langsung pakai IP Tailscale |") | Out-Null
-          $summaryLines.Add("") | Out-Null
-
-          $summaryLines.Add("## 🧹 Cleanup") | Out-Null
-          $summaryLines.Add("") | Out-Null
-          $summaryLines.Add("Saat runtime selesai, gagal, atau workflow masuk cleanup, step terakhir akan mencoba menjalankan ``tailscale logout`` otomatis.") | Out-Null
-
-          $summaryLines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-      - name: ⏳ Show Access Info & Keep Alive
-        shell: pwsh
-        run: |
-          $passwordMode = '${{ inputs.rdp_password_mode }}'
-
-          if ($passwordMode -eq "same_from_secret") {
-            $passwordForDisplay = "Use GitHub Secret RDP_PASSWORD"
-          } else {
-            $passwordForDisplay = $env:RDP_PASSWORD
-          }
-
-          function Logout-TailscaleSafely {
-            $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-
-            if (Test-Path $tsExe) {
-              Write-Host "Logging out from Tailscale..."
-              & $tsExe logout
-
-              if ($LASTEXITCODE -eq 0) {
-                Write-Host "✅ Tailscale logout completed"
-              } else {
-                Write-Warning "⚠️ Tailscale logout returned exit code $LASTEXITCODE"
-              }
-            } else {
-              Write-Host "tailscale.exe not found. Skipping logout."
-            }
-          }
-
-          Write-Host ""
-          Write-Host "╔══════════════════════════════════════╗"
-          Write-Host "║          WINDOWS RDP READY           ║"
-          Write-Host "╠══════════════════════════════════════╣"
-          Write-Host "║  Hostname : $env:TAILSCALE_HOSTNAME"
-          Write-Host "║  IP       : $env:TAILSCALE_IP"
-          Write-Host "║  Username : $env:RDP_USER"
-          Write-Host "║  Password : $passwordForDisplay"
-          Write-Host "╚══════════════════════════════════════╝"
-          Write-Host ""
-
-          try {
-            $hours = [int]'${{ inputs.duration_hours }}'
-            $seconds = $hours * 3600
-            $elapsed = 0
-
-            while ($elapsed -lt $seconds) {
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] ✅ Session active - elapsed $elapsed seconds"
-              Start-Sleep -Seconds 300
-              $elapsed += 300
-            }
-
-            Write-Host "Session completed."
-          } finally {
-            Logout-TailscaleSafely
-          }
-
-      - name: 🧹 Cleanup Tailscale Logout
-        if: always()
-        shell: pwsh
-        run: |
-          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-
-          if (Test-Path $tsExe) {
-            Write-Host "Running final Tailscale cleanup/logout..."
-            & $tsExe logout
-
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "✅ Final Tailscale logout completed"
-            } else {
-              Write-Warning "⚠️ Final Tailscale logout returned exit code $LASTEXITCODE"
-            }
-          } else {
-            Write-Host "tailscale.exe not found. Skipping final cleanup."
-          }
-) {
-            throw 'Tailscale IPv4 is missing or invalid; refusing to expose noVNC.'
+          if ($env:TAILSCALE_IP -notmatch '^100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.\d{1,3}\.\d{1,3}$') {
+            throw 'Valid Tailscale IPv4 not found.'
           }
 
           $base = Join-Path $env:ProgramData 'RDP-Setup\noVNC'
           New-Item -ItemType Directory -Path $base -Force | Out-Null
-          # VNC only accepts connections from 127.0.0.1, not the network.
-          # Disable TightVNC legacy Java Web UI and its firewall exception.
+          # Install signed TightVNC with localhost-only RFB and no built-in Java viewer.
           $version = '2.8.90'
-          $installer = Join-Path $base 'tightvnc.msi'
-          $msiUrl = "https://www.tightvnc.com/download/$version/tightvnc-$version-gpl-setup-64bit.msi"
+          $msi = Join-Path $base 'tightvnc.msi'
           try {
-            Invoke-WebRequest -Uri $msiUrl -OutFile $installer -UseBasicParsing -TimeoutSec 180
-            $sig = Get-AuthenticodeSignature -FilePath $installer
-            if ($sig.Status -ne 'Valid') { throw "Invalid TightVNC signature: $($sig.Status)" }
-            $msiArgs = @(
-              '/i', ('"' + $installer + '"'), '/qn', '/norestart',
+            Invoke-WebRequest -Uri "https://www.tightvnc.com/download/$version/tightvnc-$version-gpl-setup-64bit.msi" -OutFile $msi -UseBasicParsing -TimeoutSec 180
+            $sig = Get-AuthenticodeSignature -FilePath $msi
+            if ($sig.Status -ne 'Valid') { throw "TightVNC signature invalid: $($sig.Status)" }
+            $installArgs = @(
+              '/i', ('"' + $msi + '"'), '/qn', '/norestart',
               'ADDLOCAL=Server', 'SERVER_REGISTER_AS_SERVICE=1', 'SERVER_ADD_FIREWALL_EXCEPTION=0',
               'SET_ACCEPTRFBCONNECTIONS=1', 'VALUE_OF_ACCEPTRFBCONNECTIONS=1',
               'SET_ACCEPTHTTPCONNECTIONS=1', 'VALUE_OF_ACCEPTHTTPCONNECTIONS=0',
@@ -3112,70 +2336,69 @@ jobs:
               'SET_USECONTROLAUTHENTICATION=1', 'VALUE_OF_USECONTROLAUTHENTICATION=1',
               'SET_CONTROLPASSWORD=1', "VALUE_OF_CONTROLPASSWORD=$vncPassword"
             )
-            $p = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" -ArgumentList $msiArgs -PassThru -Wait -WindowStyle Hidden
-            if ($p.ExitCode -notin @(0, 3010, 1641)) { throw "TightVNC MSI failed: $($p.ExitCode)" }
+            $installed = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" -ArgumentList $installArgs -Wait -PassThru -WindowStyle Hidden
+            if ($installed.ExitCode -notin @(0,3010,1641)) { throw "TightVNC MSI exit code: $($installed.ExitCode)" }
           } finally {
-            Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $msi -Force -ErrorAction SilentlyContinue
           }
 
-          # Fail closed if localhost restriction and password protection are missing.
-          $vnc = Get-ItemProperty 'HKLM:\SOFTWARE\TightVNC\Server' -ErrorAction Stop
-          if ($vnc.LoopbackOnly -ne 1 -or $vnc.AllowLoopback -ne 1 -or
-              $vnc.AcceptHttpConnections -ne 0 -or $vnc.UseVncAuthentication -ne 1) {
-            throw 'VNC localhost-only / password settings could not be verified.'
+          $settings = Get-ItemProperty 'HKLM:\SOFTWARE\TightVNC\Server' -ErrorAction Stop
+          if ($settings.LoopbackOnly -ne 1 -or $settings.AllowLoopback -ne 1 -or
+              $settings.AcceptHttpConnections -ne 0 -or $settings.UseVncAuthentication -ne 1) {
+            throw 'VNC loopback-only/password settings verification failed.'
           }
-          $svc = Get-Service -Name 'tvnserver' -ErrorAction Stop
-          if ($svc.Status -ne 'Running') { Start-Service -Name 'tvnserver' -ErrorAction Stop }
-          $vncReady = $false
-          for ($i = 0; $i -lt 15; $i++) {
-            if (Test-NetConnection -ComputerName 127.0.0.1 -Port 5900 -InformationLevel Quiet -WarningAction SilentlyContinue) {
-              $vncReady = $true
+          $svc = Get-Service -Name tvnserver -ErrorAction Stop
+          if ($svc.Status -ne 'Running') { Start-Service tvnserver -ErrorAction Stop }
+          $rfbReady = $false
+          for ($i=0; $i -lt 15; $i++) {
+            if (Test-NetConnection 127.0.0.1 -Port 5900 -InformationLevel Quiet -WarningAction SilentlyContinue) {
+              $rfbReady = $true
               break
             }
             Start-Sleep -Seconds 2
           }
-          if (-not $vncReady) { throw 'TightVNC not listening on localhost:5900.' }
+          if (-not $rfbReady) { throw 'TightVNC port 5900 is not ready on loopback.' }
 
-          $zip = Join-Path $base 'novnc.zip'
-          $webDir = Join-Path $base 'web'
-          Invoke-WebRequest -Uri 'https://github.com/novnc/noVNC/archive/refs/tags/v1.7.0.zip' -OutFile $zip -UseBasicParsing -TimeoutSec 180
-          Expand-Archive -LiteralPath $zip -DestinationPath $base -Force
-          Move-Item -LiteralPath (Join-Path $base 'noVNC-1.7.0') -Destination $webDir -Force
-          Remove-Item -LiteralPath $zip -Force
-          if (-not (Test-Path (Join-Path $webDir 'vnc.html'))) { throw 'noVNC web UI missing.' }
+          # Download official noVNC static frontend and install its websockify bridge.
+          $archive = Join-Path $base 'novnc.zip'
+          $webRoot = Join-Path $base 'web'
+          Invoke-WebRequest -Uri 'https://github.com/novnc/noVNC/archive/refs/tags/v1.7.0.zip' -OutFile $archive -UseBasicParsing -TimeoutSec 180
+          Expand-Archive -LiteralPath $archive -DestinationPath $base -Force
+          Move-Item -LiteralPath (Join-Path $base 'noVNC-1.7.0') -Destination $webRoot -Force
+          Remove-Item -LiteralPath $archive -Force
+          if (-not (Test-Path (Join-Path $webRoot 'vnc.html'))) { throw 'noVNC web frontend not found.' }
           $python = (Get-Command python.exe -ErrorAction Stop).Source
           & $python -m pip install --disable-pip-version-check --no-input 'websockify==0.13.0'
-          if ($LASTEXITCODE -ne 0) { throw 'websockify pip installation failed.' }
+          if ($LASTEXITCODE -ne 0) { throw 'websockify installation failed.' }
 
-          # Bind only to the Tailscale interface. No internet/public port.
+          # Web endpoint listens ONLY on the Tailscale IPv4, with a tailnet-only firewall rule.
           $rule = 'WFS-noVNC-Tailscale'
           Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
           New-NetFirewallRule -Name $rule -DisplayName 'WFS noVNC Tailscale only' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 6080 -LocalAddress $env:TAILSCALE_IP -RemoteAddress '100.64.0.0/10' -Profile Any -ErrorAction Stop | Out-Null
-          $stdout = Join-Path $base 'websockify.out.log'
-          $stderr = Join-Path $base 'websockify.err.log'
-          $args = @('-m', 'websockify', '--web', ('"' + $webDir + '"'), '--listen', $env:TAILSCALE_IP, '6080', '127.0.0.1:5900')
-          $proxy = Start-Process -FilePath $python -ArgumentList $args -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $logOut = Join-Path $base 'websockify.out.log'
+          $logErr = Join-Path $base 'websockify.err.log'
+          $args = @('-m','websockify','--web',('"' + $webRoot + '"'),'--listen',$env:TAILSCALE_IP,'6080','127.0.0.1:5900')
+          $proxy = Start-Process -FilePath $python -ArgumentList $args -WindowStyle Hidden -PassThru -RedirectStandardOutput $logOut -RedirectStandardError $logErr
           $url = "http://$($env:TAILSCALE_IP):6080/vnc.html"
-          $webReady = $false
-          for ($i = 0; $i -lt 15; $i++) {
+          $ready = $false
+          for ($i=0; $i -lt 15; $i++) {
             if ($proxy.HasExited) { break }
             try {
               $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5
               if ($response.StatusCode -eq 200 -and $response.Content -match 'noVNC') {
-                $webReady = $true
+                $ready = $true
                 break
               }
             } catch {}
             Start-Sleep -Seconds 2
           }
-          if (-not $webReady) {
-            if (Test-Path $stderr) { Get-Content $stderr -Tail 35 | Out-Host }
-            throw 'noVNC did not become reachable via the Tailscale IP.'
+          if (-not $ready) {
+            if (Test-Path $logErr) { Get-Content $logErr -Tail 30 | Out-Host }
+            throw 'noVNC HTTP endpoint did not respond on the Tailscale IPv4.'
           }
           "NOVNC_URL=$url" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          Write-Host "✅ noVNC browser ready: $url"
-          Write-Host 'Use repository secret VNC_PASSWORD on the noVNC login screen.'
-          Write-Host 'noVNC mirrors Windows console; RDP may connect to a different user session.'
+          Write-Host "✅ noVNC web access: $url"
+          Write-Host 'The browser requires VNC_PASSWORD; VNC shows the Windows console session.'
 
       - name: ✅ Verify RDP Port
         if: inputs.remote_access != 'novnc'

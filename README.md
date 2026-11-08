@@ -44,6 +44,29 @@ Workflow Linux berjalan **terpisah** dari Windows, tetap memakai Tailscale, GitH
 
 ---
 
+## 📘 Panduan cepat dua workflow dan error terbaru
+
+| Fitur | Windows | Linux |
+|:--|:--|:--|
+| Run workflow | [Windows Actions](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml) | [Linux Actions](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml) |
+| Remote | `rdp`, `novnc`, `both` | `rdp`, `novnc` (web Selkies), `both` |
+| Username | `RDP` untuk remote Windows | `rdp_username` (default `wfsrdp`) / `web_username` (default `wfs`) |
+| Hostname | `tailscale_hostname`, mode tetap/unik | `tailscale_hostname`, mode tetap/unik |
+| Password | `RDP_PASSWORD` dan `VNC_PASSWORD` | **Secret yang sama**, mode tetap/acak per run |
+| Durasi | 1/3/6 jam | 1/3/6 jam |
+| Aplikasi | VS Code/Antigravity, CapCut/Shotcut, MT4/MT5, AI agent/router, ArtCraft | Menu pilihan sama, instalasi sesuai kompatibilitas distro |
+
+**Gunakan [Repository Secrets](https://github.com/wawanwfs/RDP/settings/secrets/actions)** untuk `TAILSCALE_AUTH_KEY`, `RDP_PASSWORD`, dan `VNC_PASSWORD`. Linux tidak memerlukan `LINUX_DESKTOP_PASSWORD`. Untuk mode acak, Linux menurunkan password dari secret asal dan Run ID tanpa mencetaknya di log; cara menghitungnya terdapat pada [panduan Linux lengkap](linux/README.md).
+
+**Alamat akses:** Windows noVNC TCP 6082 menggunakan `http://100.x.x.x:6082/vnc.html`, sedangkan Linux Webtop TCP 6082 menggunakan **HTTPS self-signed** di `https://100.x.x.x:6082/`. RDP keduanya lewat port TCP 3389 melalui Tailscale; Linux menggunakan xrdp, dengan sesi yang terpisah dari desktop browser.
+
+**Daftar aplikasi Linux:** VS Code dicoba via repo Microsoft pada Debian/Ubuntu; Shotcut via distro; Codex/Claude/OpenClaw/OpenCode dan router AI dicoba via npm; MetaTrader Wine/manual, Antigravity manual, CapCut native Linux tidak didukung. Lihat status `INSTALLED`, `FAILED`, `MANUAL`, atau `UNSUPPORTED` pada Actions Summary. Tidak semua opsi berarti instalasinya telah berhasil.
+
+**Log terbaru:** [run Linux #42536911372](https://github.com/wawanwfs/RDP/actions/runs/42536911372) gagal di Tailscale karena `--accept-routes=false` dikirim dua kali (`flag provided multiple times`). Duplikat tersebut **sudah dihapus** pada [commit ee689ad](https://github.com/wawanwfs/RDP/commit/ee689ad539f4e89046495ffa4e2e967a6701b6d3). [CI Linux #42537213939](https://github.com/wawanwfs/RDP/actions/runs/42537213939) lulus tiga job, tetapi login Tailscale end-to-end dari klien lain masih perlu diuji pada workflow run baru.
+
+**Troubleshooting:** gunakan IP/URL dari run aktif; cek Tailscale ACL/grants, opsi remote dan port 3389/6082; gunakan F11 untuk fullscreen; hindari menutup proses runner; dan backup data karena job dibatasi total 360 menit termasuk instalasi. Untuk detail setiap input distro, desktop, username, hostname, dan password, baca [Linux README](linux/README.md) atau langsung [YAML Linux](.github/workflows/linux-remote-workspace.yml) dan [YAML Windows](.github/workflows/windows-remote-workspace-with-apps.yml).
+
+---
 ## 🪟 Windows Remote Workspace
 
 ## ✨ Ringkasan

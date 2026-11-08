@@ -1,21 +1,43 @@
 <div align="center">
 
-# 🪟 WFS Windows Remote Workspace
+# 🖥️ WFS Remote Workspaces
 
-### Remote Windows Desktop • RDP • noVNC • Tailscale
+### Windows RDP/noVNC + Linux Desktop • Tailscale • GitHub Actions
 
-**Satu GitHub Actions workflow untuk menyiapkan workspace Windows sementara, dengan akses privat dari PC atau browser.**
+**Dua workflow terpisah untuk desktop Windows dan Linux sementara, dengan akses privat melalui Tailscale.**
 
 [![Windows Workspace](https://img.shields.io/github/actions/workflow/status/wawanwfs/RDP/windows-remote-workspace-with-apps.yml?branch=main&style=for-the-badge&logo=githubactions&label=Windows%20Workspace)](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml)
+[![Linux Workspace](https://img.shields.io/github/actions/workflow/status/wawanwfs/RDP/linux-remote-workspace.yml?branch=main&style=for-the-badge&logo=linux&label=Linux%20Workspace)](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml)
 [![Windows](https://img.shields.io/badge/Windows-2022%20%7C%202025-0078D4?style=for-the-badge&logo=windows)](https://github.com/wawanwfs/RDP/actions)
 [![Tailscale](https://img.shields.io/badge/Tailscale-Private%20Tailnet-242424?style=for-the-badge)](https://tailscale.com/)
 [![PowerShell](https://img.shields.io/badge/PowerShell-7-5391FE?style=for-the-badge&logo=powershell)](https://learn.microsoft.com/powershell/)
 
-[**▶ Jalankan Workspace**](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml) · [Lihat Actions](https://github.com/wawanwfs/RDP/actions) · [Atur Repository Secrets](https://github.com/wawanwfs/RDP/settings/secrets/actions)
+[**▶ Windows Workspace**](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml) · [**▶ Linux Workspace**](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml) · [Lihat Actions](https://github.com/wawanwfs/RDP/actions) · [Atur Repository Secrets](https://github.com/wawanwfs/RDP/settings/secrets/actions)
 
 </div>
 
 ---
+
+## 🐧 Linux Remote Workspace — 20 pilihan desktop
+
+Workflow Linux kini tersedia **terpisah dari workflow Windows**, menggunakan LinuxServer.io Webtop / Selkies dan Tailscale. Distro dipilih melalui GitHub Actions: **Debian, Ubuntu, Fedora, Arch Linux, atau Alpine Linux**, dengan UI **Xfce, MATE, KDE Plasma, atau i3**. Default **Debian Xfce** ringan dan praktis; KDE lebih kaya fitur, i3 paling minimal.
+
+| Fitur | Linux Remote Workspace |
+|:--|:--|
+| **Browser GUI** | HTTPS privat via Tailscale (Selkies; auto-resize mengikuti browser) |
+| **Distro** | 5 pilihan × 4 desktop = **20 kombinasi** |
+| **Aplikasi opsional** | Developer / Office / Media / semua, ArtCraft Launcher Linux terbaru |
+| **Keamanan** | Password desktop di GitHub Secret `LINUX_DESKTOP_PASSWORD`, port Docker hanya `127.0.0.1` |
+| **Durasi** | 1, 3 atau 6 jam; batas total job GitHub Actions 6 jam |
+| **Host** | Runner Ubuntu 24.04; distro pilihan berjalan sebagai container |
+
+[**▶ Jalankan Linux Remote Workspace**](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml) · [**Baca panduan lengkap Linux**](linux/README.md)
+
+> **Persiapan:** Secret `TAILSCALE_AUTH_KEY` yang sudah dipakai Windows dapat digunakan ulang. Tambahkan juga `LINUX_DESKTOP_PASSWORD` (minimal 12 karakter). Untuk mode fallback port 6082, browser mungkin menampilkan peringatan sertifikat Webtop self-signed; mode HTTPS Tailscale port 443 memerlukan konfigurasi sertifikat pada tailnet.
+
+---
+
+## 🪟 Windows Remote Workspace
 
 ## ✨ Ringkasan
 

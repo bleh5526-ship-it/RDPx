@@ -45,13 +45,20 @@ jobs:
           assert inputs["duration_hours"]["options"] == ["1", "3", "6"]
           assert len(inputs["distro"]["options"]) * len(inputs["desktop"]["options"]) == 20
           assert inputs["transport"]["default"] == "auto"
+          assert inputs["remote_access"]["options"] == ["rdp", "novnc", "both"]
+          assert inputs["hostname_mode"]["options"] == ["same_each_run", "unique_each_run"]
+          assert inputs["rdp_password_mode"]["options"] == ["same_from_secret", "random_each_run"]
+          assert inputs["vnc_password_mode"]["options"] == ["same_from_secret", "random_each_run"]
+          assert inputs["rdp_username"]["default"] == "wfsrdp"
+          assert inputs["web_username"]["default"] == "wfs"
+          assert len(inputs) <= 25
           job = data["jobs"]["linux-remote-workspace"]
           assert job["runs-on"] == "ubuntu-24.04"
           assert job["timeout-minutes"] == "360"
           text = workflow.read_text(encoding="utf-8")
           runtime = pathlib.Path("linux/workspace.sh").read_text(encoding="utf-8")
           for required in (
-              "secrets.TAILSCALE_AUTH_KEY", "secrets.LINUX_DESKTOP_PASSWORD",
+              "secrets.TAILSCALE_AUTH_KEY", "secrets.RDP_PASSWORD", "secrets.VNC_PASSWORD",
               "bash linux/workspace.sh keepalive", "if: always()",
               "tailscale/github-action@v4",
           ):
@@ -60,11 +67,14 @@ jobs:
               "127.0.0.1:13001:3001", "127.0.0.1:13000:3000",
               "FILE__PASSWORD=/run/secrets/web_password",
               "SELKIES_ENABLE_RESIZE=true",
+              "127.0.0.1:13389:3389",
+              "hmac.new(",
               "tailscale serve --bg --yes --tcp=6082",
           ):
               assert required in runtime, required
           assert "tailscale funnel" not in runtime.lower()
           assert "cloudflared" not in runtime.lower()
+          assert pathlib.Path("linux/setup-rdp.sh").is_file()
           print("PASS: Linux workflow YAML, 20 desktop variants, secret use, loopback-only ports and cleanup")
           PY
 
@@ -79,13 +89,20 @@ jobs:
       WFS_DURATION: "1"
       WFS_TRANSPORT: tailnet_tls_tcp
       WFS_APPS: none
+      WFS_REMOTE: novnc
+      WFS_HOSTNAME_BASE: wfs-linux
+      WFS_HOSTNAME_MODE: unique_each_run
+      WFS_RDP_USERNAME: wfsrdp
+      WFS_WEB_USERNAME: wfs
+      WFS_RDP_PASSWORD_MODE: same_from_secret
+      WFS_VNC_PASSWORD_MODE: same_from_secret
     steps:
       - name: "📦 Checkout"
         uses: actions/checkout@v7.0.1
 
       - name: "🔐 Prepare dummy smoke-test-only authentication"
         env:
-          WFS_DESKTOP_PASSWORD: "CI-ONLY-LOCAL-TEST-PASSWORD-2026"
+          WFS_VNC_PASSWORD: "CI-ONLY-LOCAL-TEST-PASSWORD-2026"
         run: bash linux/workspace.sh prepare
 
       - name: "🖥️ Launch actual Debian Xfce Webtop and test authenticated HTTPS"

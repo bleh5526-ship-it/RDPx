@@ -117,3 +117,52 @@ jobs:
       - name: "🧹 Always remove test desktop"
         if: always()
         run: bash linux/workspace.sh cleanup
+
+  smoke-debian-both:
+    name: "Smoke Debian native xrdp plus browser in one container"
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    env:
+      WFS_DISTRO: debian
+      WFS_DESKTOP: xfce
+      WFS_DURATION: "1"
+      WFS_TRANSPORT: tailnet_tls_tcp
+      WFS_APPS: none
+      WFS_REMOTE: both
+      WFS_HOSTNAME_BASE: wfs-ci
+      WFS_HOSTNAME_MODE: unique_each_run
+      WFS_RDP_USERNAME: wfsrdp
+      WFS_WEB_USERNAME: wfs
+      WFS_RDP_PASSWORD_MODE: random_each_run
+      WFS_VNC_PASSWORD_MODE: same_from_secret
+    steps:
+      - name: "📦 Checkout"
+        uses: actions/checkout@v7.0.1
+
+      - name: "🔑 Prepare both password modes using test-only values"
+        env:
+          WFS_RDP_PASSWORD: "CI-RDP-ONLY-NOT-PRODUCTION-2026"
+          WFS_VNC_PASSWORD: "CI-VNC-ONLY-NOT-PRODUCTION-2026"
+        run: |
+          bash linux/workspace.sh prepare
+          test -s "$RUNNER_TEMP/wfs-linux/rdp-password"
+          test -s "$RUNNER_TEMP/wfs-linux/web-password"
+          test "$(wc -c < "$RUNNER_TEMP/wfs-linux/rdp-password")" -eq 24
+          test "$(cat "$RUNNER_TEMP/wfs-linux/web-password")" = "CI-VNC-ONLY-NOT-PRODUCTION-2026"
+          test "$WFS_HOSTNAME" = "wfs-ci-$GITHUB_RUN_ID"
+          echo 'PASS: two independent passwords, deterministic per-run RDP mode, hostname and preserved web secret.'
+
+      - name: "🖥️ Launch Webtop and native Xorg xrdp"
+        timeout-minutes: 19
+        run: |
+          bash linux/workspace.sh start
+          bash linux/setup-rdp.sh
+          test "$(docker inspect -f '{{.State.Running}}' wfs-linux-webtop)" = true
+          docker port wfs-linux-webtop 3389 | grep -F '127.0.0.1:13389'
+          docker port wfs-linux-webtop 3001 | grep -F '127.0.0.1:13001'
+          echo 'PASS: RDP handshake, authenticated web login and localhost-only mappings.'
+
+      - name: "🧹 Always remove both-mode test desktop"
+        if: always()
+        run: bash linux/workspace.sh cleanup

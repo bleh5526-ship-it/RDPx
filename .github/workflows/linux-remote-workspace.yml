@@ -1,0 +1,126 @@
+name: "🐧 WFS Linux Remote Workspace"
+run-name: "🐧 Linux Workspace • ${{ inputs.distro }} / ${{ inputs.desktop }} • ${{ inputs.duration_hours }}h"
+
+on:
+  workflow_dispatch:
+    inputs:
+      distro:
+        description: "Distro Linux (container di Ubuntu runner)"
+        required: true
+        type: choice
+        default: "debian"
+        options:
+          - "debian"
+          - "ubuntu"
+          - "fedora"
+          - "arch"
+          - "alpine"
+      desktop:
+        description: "Desktop: Xfce/MATE ringan, KDE mewah, i3 super ringan"
+        required: true
+        type: choice
+        default: "xfce"
+        options:
+          - "xfce"
+          - "mate"
+          - "kde"
+          - "i3"
+      duration_hours:
+        description: "Durasi setelah desktop ready (batas total job 6 jam)"
+        required: true
+        type: choice
+        default: "6"
+        options:
+          - "1"
+          - "3"
+          - "6"
+      transport:
+        description: "Auto: HTTPS 443 jika tersedia, fallback HTTPS self-signed over Tailscale TCP 6082"
+        required: true
+        type: choice
+        default: "auto"
+        options:
+          - "auto"
+          - "tailnet_https"
+          - "tailnet_tls_tcp"
+      apps_bundle:
+        description: "Aplikasi opsional; none paling cepat dan ringan"
+        required: true
+        type: choice
+        default: "none"
+        options:
+          - "none"
+          - "developer"
+          - "office"
+          - "media"
+          - "all"
+      install_artcraft:
+        description: "Coba install ArtCraft Launcher Linux stable terbaru (tidak didukung native di Alpine)"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  linux-remote-workspace:
+    name: "Linux GUI via Tailscale / Browser"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      WFS_DISTRO: ${{ inputs.distro }}
+      WFS_DESKTOP: ${{ inputs.desktop }}
+      WFS_DURATION: ${{ inputs.duration_hours }}
+      WFS_TRANSPORT: ${{ inputs.transport }}
+      WFS_APPS: ${{ inputs.apps_bundle }}
+    steps:
+      - name: "📦 Checkout Linux workspace scripts"
+        uses: actions/checkout@v4
+
+      - name: "🔐 Validate inputs and protect Linux desktop password"
+        env:
+          WFS_DESKTOP_PASSWORD: ${{ secrets.LINUX_DESKTOP_PASSWORD }}
+        run: bash linux/workspace.sh prepare
+
+      - name: "🐧 Start selected Linux distro + responsive desktop"
+        timeout-minutes: 15
+        run: bash linux/workspace.sh start
+
+      - name: "🐾 Connect temporary runner to private Tailscale tailnet"
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          hostname: "wfs-linux-${{ github.run_id }}"
+          version: latest
+          args: "--accept-routes=false --accept-dns=false"
+
+      - name: "🌐 Publish exactly one private HTTPS browser endpoint"
+        timeout-minutes: 3
+        run: bash linux/workspace.sh publish
+
+      - name: "📦 Install optional Linux application bundle"
+        if: inputs.apps_bundle != 'none'
+        timeout-minutes: 10
+        continue-on-error: true
+        run: bash linux/install-apps.sh
+
+      - name: "🎨 Install latest verified Linux ArtCraft Launcher"
+        if: inputs.install_artcraft
+        timeout-minutes: 8
+        continue-on-error: true
+        run: bash linux/install-artcraft.sh
+
+      - name: "📊 Print Linux browser URL and session guide"
+        run: bash linux/workspace.sh summary
+
+      - name: "🟢 Remote READY — Keep Alive (do not close runner)"
+        timeout-minutes: 355
+        run: bash linux/workspace.sh keepalive
+
+      - name: "🧹 Stop desktop and delete temporary password"
+        if: always()
+        run: bash linux/workspace.sh cleanup

@@ -1,5 +1,5 @@
 name: "🐧 WFS Linux Remote Workspace"
-run-name: "🐧 Linux Workspace • ${{ inputs.distro }} / ${{ inputs.desktop }} • ${{ inputs.duration_hours }}h"
+run-name: "🐧 Linux Workspace • ${{ inputs.remote_access }} • ${{ inputs.distro }} / ${{ inputs.desktop }} • ${{ inputs.duration_hours }}h"
 
 on:
   workflow_dispatch:
@@ -96,6 +96,45 @@ on:
           - "opencode"
           - "both"
           - "all"
+      tailscale_hostname:
+        description: "Nama dasar runner/hostname Tailscale"
+        type: string
+        required: true
+        default: "wfs-linux"
+      hostname_mode:
+        description: "Mode hostname runner tetap atau unik per run"
+        required: true
+        type: choice
+        default: "unique_each_run"
+        options:
+          - "same_each_run"
+          - "unique_each_run"
+      rdp_username:
+        description: "Username akun Linux untuk xrdp"
+        required: true
+        type: string
+        default: "wfsrdp"
+      web_username:
+        description: "Username login desktop browser Selkies"
+        required: true
+        type: string
+        default: "wfs"
+      rdp_password_mode:
+        description: "RDP password: tetap dari RDP_PASSWORD atau acak per run tanpa membocorkan log"
+        required: true
+        type: choice
+        default: "same_from_secret"
+        options:
+          - "same_from_secret"
+          - "random_each_run"
+      vnc_password_mode:
+        description: "Web password: tetap dari VNC_PASSWORD atau acak per run tanpa membocorkan log"
+        required: true
+        type: choice
+        default: "same_from_secret"
+        options:
+          - "same_from_secret"
+          - "random_each_run"
       duration_hours:
         description: "Durasi setelah desktop ready (batas total job 6 jam)"
         required: true
@@ -149,6 +188,12 @@ jobs:
       WFS_TRANSPORT: ${{ inputs.transport }}
       WFS_APPS: ${{ inputs.apps_bundle }}
       WFS_REMOTE: ${{ inputs.remote_access }}
+      WFS_HOSTNAME_BASE: ${{ inputs.tailscale_hostname }}
+      WFS_HOSTNAME_MODE: ${{ inputs.hostname_mode }}
+      WFS_RDP_USERNAME: ${{ inputs.rdp_username }}
+      WFS_WEB_USERNAME: ${{ inputs.web_username }}
+      WFS_RDP_PASSWORD_MODE: ${{ inputs.rdp_password_mode }}
+      WFS_VNC_PASSWORD_MODE: ${{ inputs.vnc_password_mode }}
       WFS_IDE: ${{ inputs.ide_choice }}
       WFS_EDITOR: ${{ inputs.editor_choice }}
       WFS_METATRADER: ${{ inputs.metatrader_choice }}
@@ -178,7 +223,7 @@ jobs:
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
-          hostname: "wfs-linux-${{ github.run_id }}"
+          hostname: "${{ env.WFS_HOSTNAME }}"
           version: latest
           args: "--accept-routes=false --accept-dns=false"
 

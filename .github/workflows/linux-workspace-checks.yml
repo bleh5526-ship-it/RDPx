@@ -49,7 +49,8 @@ jobs:
           assert inputs["hostname_mode"]["options"] == ["same_each_run", "unique_each_run"]
           assert inputs["rdp_password_mode"]["options"] == ["same_from_secret", "random_each_run"]
           assert inputs["vnc_password_mode"]["options"] == ["same_from_secret", "random_each_run"]
-          assert inputs["rdp_username"]["default"] == "wfsrdp"
+          assert inputs["rdp_username"]["default"] == "rdp"
+          assert inputs["tailscale_hostname"]["default"] == "rdp-runner"
           assert inputs["web_username"]["default"] == "wfs"
           assert len(inputs) <= 25
           job = data["jobs"]["linux-remote-workspace"]
@@ -82,6 +83,10 @@ jobs:
           assert "--accept-routes" not in ts_steps[0].get("with", {}).get("args", "")
           assert "--accept-dns" not in ts_steps[0].get("with", {}).get("args", "")
           assert pathlib.Path("linux/setup-rdp.sh").is_file()
+          assert "# 🐧 WFS Linux Remote Workspace Dashboard" in runtime
+          assert "REMOTE WORKSPACE — READY" in runtime
+          assert "Per-Application Results" in runtime
+          assert "External-device graphical login" in runtime
           print("PASS: Linux workflow YAML, 20 desktop variants, secret use, loopback-only ports and cleanup")
           PY
 
@@ -97,9 +102,9 @@ jobs:
       WFS_TRANSPORT: tailnet_tls_tcp
       WFS_APPS: none
       WFS_REMOTE: novnc
-      WFS_HOSTNAME_BASE: wfs-linux
+      WFS_HOSTNAME_BASE: rdp-runner
       WFS_HOSTNAME_MODE: unique_each_run
-      WFS_RDP_USERNAME: wfsrdp
+      WFS_RDP_USERNAME: rdp
       WFS_WEB_USERNAME: wfs
       WFS_RDP_PASSWORD_MODE: same_from_secret
       WFS_VNC_PASSWORD_MODE: same_from_secret
@@ -139,7 +144,7 @@ jobs:
       WFS_REMOTE: both
       WFS_HOSTNAME_BASE: wfs-ci
       WFS_HOSTNAME_MODE: unique_each_run
-      WFS_RDP_USERNAME: wfsrdp
+      WFS_RDP_USERNAME: rdp
       WFS_WEB_USERNAME: wfs
       WFS_RDP_PASSWORD_MODE: random_each_run
       WFS_VNC_PASSWORD_MODE: same_from_secret
@@ -189,7 +194,7 @@ jobs:
       WFS_REMOTE: both
       WFS_HOSTNAME_BASE: wfs-ci-tailnet
       WFS_HOSTNAME_MODE: unique_each_run
-      WFS_RDP_USERNAME: wfsrdp
+      WFS_RDP_USERNAME: rdp
       WFS_WEB_USERNAME: webci
       WFS_RDP_PASSWORD_MODE: random_each_run
       WFS_VNC_PASSWORD_MODE: same_from_secret
@@ -236,6 +241,31 @@ jobs:
           ss -ltn | grep -F "$WFS_LINUX_IP:6082"
           ss -ltn | grep -F "$WFS_LINUX_IP:3389"
           echo 'PASS: Tailscale, browser TLS and xrdp, listeners persist between steps.'
+      - name: "📊 Render dashboard and assert password-safe output"
+        env:
+          WFS_APPS_STEP_OUTCOME: skipped
+          WFS_ARTCRAFT_STEP_OUTCOME: skipped
+          WFS_ARTCRAFT_SELECTED: "false"
+        run: |
+          set -euo pipefail
+          bash linux/workspace.sh summary
+          grep -F "# 🐧 WFS Linux Remote Workspace Dashboard" "$GITHUB_STEP_SUMMARY"
+          grep -F "Recommended Login" "$GITHUB_STEP_SUMMARY"
+          grep -F "Connection & Runner Details" "$GITHUB_STEP_SUMMARY"
+          grep -F "Selected Applications & Install Status" "$GITHUB_STEP_SUMMARY"
+          grep -F "RDP address" "$GITHUB_STEP_SUMMARY"
+          grep -F "webci" "$GITHUB_STEP_SUMMARY"
+          grep -F "rdp" "$GITHUB_STEP_SUMMARY"
+          if grep -Fq "CI-WEB-ONLY-NOT-PRODUCTION-2026" "$GITHUB_STEP_SUMMARY"; then
+            echo "::error::Web password leaked into GitHub Summary"
+            exit 1
+          fi
+          if grep -Fq "CI-RDP-ONLY-NOT-PRODUCTION-2026" "$GITHUB_STEP_SUMMARY"; then
+            echo "::error::RDP password leaked into GitHub Summary"
+            exit 1
+          fi
+          echo 'PASS: rendered dashboard has links, health, users and app status without credentials.'
+
       - name: "🧹 Always cleanup"
         if: always()
         run: bash linux/workspace.sh cleanup

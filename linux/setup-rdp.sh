@@ -25,15 +25,15 @@ case "$distro" in
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends \
       xrdp xorgxrdp xserver-xorg-core xfce4-session xfce4-panel xfce4-settings \
-      dbus-x11 passwd
+      dbus-x11 passwd pamtester
     ;;
   fedora)
     dnf install -y xrdp xorgxrdp xorg-x11-server-Xorg \
-      xfce4-session xfce4-panel xfce4-settings dbus-x11 shadow-utils
+      xfce4-session xfce4-panel xfce4-settings dbus-x11 shadow-utils pamtester
     ;;
   alpine)
     apk add --no-cache xrdp xorgxrdp xorg-server \
-      xfce4-session xfce4-panel xfce4-settings dbus-x11 shadow
+      xfce4-session xfce4-panel xfce4-settings dbus-x11 shadow pamtester
     ;;
 esac
 command -v xrdp >/dev/null 2>&1
@@ -44,10 +44,22 @@ test -n "$password"
 if ! id "$username" >/dev/null 2>&1; then
   useradd -m -s /bin/sh "$username"
 fi
+getent passwd "$username" >/dev/null || { echo "xrdp account missing from NSS"; exit 24; }
+id "$username" >/dev/null || { echo "xrdp user lookup failed"; exit 25; }
 printf '%s:%s\n' "$username" "$password" | chpasswd
 unset password
+# Validate xrdp PAM authentication using the secret file, not just TCP.
+# Never place the password in process arguments or the job log.
+test -f /etc/pam.d/xrdp-sesman || { echo "xrdp PAM configuration missing" >&2; exit 26; }
+command -v pamtester >/dev/null || { echo "pamtester missing" >&2; exit 27; }
+if ! { cat /run/secrets/rdp_password; printf '\n'; } | pamtester xrdp-sesman "$username" authenticate acct_mgmt >/dev/null; then
+  echo "xrdp PAM authentication/account check failed; not publishing RDP." >&2
+  exit 28
+fi
+echo "[WFS Linux xrdp] PASS: Unix account and xrdp-sesman PAM login verified."
 home="$(getent passwd "$username" | cut -d: -f6)"
 test -n "$home"
+test -d "$home" || { echo "xrdp user home missing" >&2; exit 29; }
 cat > "$home/.xsession" <<'XSESSION'
 #!/bin/sh
 unset DBUS_SESSION_BUS_ADDRESS
@@ -88,4 +100,4 @@ else:
     raise SystemExit("xrdp did not respond via loopback. Check docker exec xrdp/sesman logs.")
 PY
 echo "WFS_RDP_READY=1" >> "$GITHUB_ENV"
-info "Native RDP server verified and ready for tailnet-only TCP Serve 3389."
+info "RDP backend verified: Linux account, PAM authentication, home, Xfce session script, TCP protocol. GUI login from your client still needs acceptance testing."

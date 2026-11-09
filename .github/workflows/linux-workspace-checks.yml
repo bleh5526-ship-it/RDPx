@@ -84,6 +84,16 @@ jobs:
           assert "--accept-routes" not in ts_steps[0].get("with", {}).get("args", "")
           assert "--accept-dns" not in ts_steps[0].get("with", {}).get("args", "")
           assert pathlib.Path("linux/setup-rdp.sh").is_file()
+          xrdp_setup = pathlib.Path("linux/setup-rdp.sh").read_text(encoding="utf-8")
+          assert "pamtester xrdp-sesman" in xrdp_setup
+          assert "getent passwd" in xrdp_setup
+          assert "id \"$username\"" in xrdp_setup
+          assert pathlib.Path("linux/install-antigravity.sh").is_file()
+          assert pathlib.Path("linux/install-hermes.sh").is_file()
+          apps_source = pathlib.Path("linux/install-apps.sh").read_text(encoding="utf-8")
+          assert "ensure_node()" in apps_source and "--reinstall nodejs" in apps_source
+          assert "install-antigravity.sh" in apps_source and "install-hermes.sh" in apps_source
+          assert "failed_count" in apps_source
           assert "# 🐧 WFS Linux Remote Workspace Dashboard" in runtime
           assert "REMOTE WORKSPACE — READY" in runtime
           assert "Per-Application Results" in runtime
@@ -148,7 +158,7 @@ jobs:
       WFS_REMOTE: both
       WFS_HOSTNAME_BASE: wfs-ci
       WFS_HOSTNAME_MODE: unique_each_run
-      WFS_RDP_USERNAME: rdp
+      WFS_RDP_USERNAME: RDP
       WFS_WEB_USERNAME: wfs
       WFS_RDP_PASSWORD_MODE: random_each_run
       WFS_VNC_PASSWORD_MODE: same_from_secret
@@ -167,6 +177,7 @@ jobs:
           test "$(wc -c < "$RUNNER_TEMP/wfs-linux/rdp-password")" -eq 24
           test "$(cat "$RUNNER_TEMP/wfs-linux/web-password")" = "CI-VNC-ONLY-NOT-PRODUCTION-2026"
           grep -Fx "WFS_HOSTNAME=wfs-ci-$GITHUB_RUN_ID" "$GITHUB_ENV"
+          grep -Fx "WFS_RDP_USERNAME=rdp" "$GITHUB_ENV"
           echo 'PASS: two independent passwords, deterministic per-run RDP mode, hostname and preserved web secret.'
 
       - name: "🖥️ Launch Webtop and native Xorg xrdp"

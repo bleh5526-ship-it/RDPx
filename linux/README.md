@@ -132,16 +132,27 @@ Mode `transport=auto` mencoba Tailscale HTTPS Serve `443` sebentar (**maksimal 1
 
 | Menu | Pilihan | Implementasi Linux |
 |:--|:--|:--|
-| `ide_choice` | none, vscode, antigravity, both | VS Code: repo APT Microsoft di Debian/Ubuntu; Antigravity: instalasi GUI manual hingga paket diverifikasi |
+| `ide_choice` | none, vscode, antigravity, both | VS Code: repo APT Microsoft Debian/Ubuntu; Antigravity IDE: dicoba dari tarball Linux resmi Google (tanpa checksum yang diterbitkan) |
 | `editor_choice` | none, capcut, shotcut, both | Shotcut melalui package manager; CapCut native Linux tidak didukung |
 | `metatrader_choice` | none, mt4, mt5, both | Wine/manual; **bukan** MetaTrader native Linux |
 | `router_choice` | none, 9router, omniroute, both | Dicoba via npm package yang dipilih |
 | `coding_agent_choice` | none, codex, claude, both | npm `@openai/codex` dan `@anthropic-ai/claude-code` |
-| `ai_agent_choice` | none, hermes, openclaw, opencode, both, all | OpenClaw/OpenCode via npm; Hermes memerlukan instalasi/auth manual |
+| `ai_agent_choice` | none, hermes, openclaw, opencode, both, all | OpenClaw/OpenCode via npm; Hermes CLI dicoba dari installer stable resmi Nous Research dengan mode noninteraktif; login model tetap manual |
 | `install_artcraft` | true/false | Rilis stabil GitHub resmi, DEB/RPM/Arch; Alpine dilewati |
 | `apps_bundle` | none, developer, office, media, all | Paket Git/Python/Node, LibreOffice, GIMP, VLC |
 
-Instalasi aplikasi opsional **tidak mematikan desktop jika gagal**. Actions Summary menampilkan **INSTALLED**, **FAILED**, **MANUAL**, atau **UNSUPPORTED** per item. Pemilihan aplikasi berarti instruksi untuk *mencoba instalasi*, bukan jaminan telah terpasang dan berfungsi. Untuk CLI AI biasanya perlu autentikasi akun/API tambahan setelah masuk ke Linux.
+Instalasi aplikasi opsional **tidak mematikan desktop jika gagal**. Installer sekarang memeriksa executable masing-masing, melaporkan **INSTALLED**, **FAILED**, **MANUAL**, atau **UNSUPPORTED** per item, dan menandai langkah installer sebagai gagal bila ada paket yang gagal (desktop tetap aktif). Pemilihan aplikasi berarti instruksi untuk *mencoba instalasi*, bukan jaminan telah terpasang dan berfungsi. Untuk CLI AI biasanya perlu autentikasi akun/API tambahan setelah masuk ke Linux.
+
+### 🔧 Perbaikan xrdp dan installer aplikasi (November 2026)
+
+- **Username RDP:** akun Linux bersifat case-sensitive. Bila memasukkan `RDP` (kapital), workflow kini menormalkannya menjadi `rdp` dan menampilkan nama akun efektif pada Summary/log. Login pada klien harus memakai versi huruf kecil.
+- **Akun dan password:** sebelum endpoint RDP dipublikasikan, script memastikan `getent passwd` dan `id` menemukan akun serta melakukan autentikasi PAM melalui `pamtester xrdp-sesman` dengan password secret yang sudah dipilih. Pemeriksaan sebelumnya baru sampai TCP handshake.
+- **Node/npm:** image Ubuntu dapat berisi Node.js 22 dari NodeSource yang sudah membundel npm. Memasang paket `npm` Debian secara terpisah menyebabkan konflik dependensi. Installer sekarang memverifikasi Node dan npm dahulu, lalu hanya memulihkan paket `nodejs` bila perlu. Git, Python, Node, 9Router, dan Codex diverifikasi satu per satu.
+- **GUI/agent tambahan:** Antigravity IDE dicoba dari arsip Linux Google resmi dan ditambahkan shortcut desktop jika executable ditemukan. Arsip itu tidak menyediakan digest SHA-256 terpisah dalam halaman yang diperiksa, sehingga tidak setara dengan verifikasi checksum ArtCraft. Hermes Agent dicoba dari installer resmi stable noninteraktif untuk akun Linux yang akan digunakan, tanpa memaksa login provider.
+- **MetaTrader 4/5:** tidak tersedia sebagai aplikasi Linux native. MetaQuotes menggunakan Wine dan proses installer yang membutuhkan interaksi GUI; opsi ini tetap `MANUAL` agar tidak memberi klaim instalasi palsu. CapCut native Linux tetap tidak didukung.
+- **Cleanup:** cache aplikasi milik root di volume Webtop dibersihkan dari folder sementara khusus run menggunakan izin yang memadai. Tidak menghapus data di luar workspace sementara.
+
+Jika ada aplikasi yang gagal, lihat kolom **Per-Application Results** di GitHub Actions Summary. Status `INSTALLED` berarti executable/paket ditemukan, bukan bahwa login provider, aktivasi lisensi, atau sesi GUI sudah terbukti.
 
 ## ⏳ Keep Alive dan keamanan
 

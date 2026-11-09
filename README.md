@@ -64,13 +64,15 @@ Workflow Linux berjalan **terpisah** dari Windows, tetap memakai Tailscale, GitH
 
 **Perbaikan Linux 9 November 2026:** ketika Tailscale Serve belum diaktifkan oleh admin tailnet, workflow Linux tidak lagi memerlukan persetujuan Serve untuk mode `auto`/`tailnet_tls_tcp`. Port HTTPS Webtop `6082` dan xrdp `3389` diteruskan oleh proxy TCP yang **hanya diikat pada alamat IPv4 Tailscale runner** (`100.x.x.x`), sementara port Docker tetap hanya pada `127.0.0.1`. HTTPS 443 melalui Tailscale Serve tetap opsional dan hanya digunakan jika sudah tersedia. Untuk akses browser fallback, sertifikat Webtop bersifat self-signed. [Lihat pengujian integrasi Linux](https://github.com/wawanwfs/RDP/actions/workflows/linux-workspace-checks.yml).
 
-**Daftar aplikasi Linux:** VS Code dicoba via repo Microsoft pada Debian/Ubuntu; Shotcut via distro; Codex/Claude/OpenClaw/OpenCode dan router AI dicoba via npm; MetaTrader Wine/manual, Antigravity manual, CapCut native Linux tidak didukung. Lihat status `INSTALLED`, `FAILED`, `MANUAL`, atau `UNSUPPORTED` pada Actions Summary. Tidak semua opsi berarti instalasinya telah berhasil.
+**Daftar aplikasi Linux:** VS Code dicoba via repo Microsoft pada Debian/Ubuntu; Shotcut via paket distro; Codex/Claude/OpenClaw/OpenCode dan AI router melalui npm; Antigravity IDE melalui arsip Linux resmi Google; Hermes CLI melalui installer resmi Nous Research noninteraktif; ArtCraft melalui paket resmi terverifikasi. MetaTrader 4/5 tetap memerlukan Wine dan tahapan GUI manual, sedangkan CapCut native Linux tidak didukung. Installer kini memverifikasi executable satu per satu dan melaporkan `INSTALLED`, `FAILED`, `MANUAL`, atau `UNSUPPORTED` secara terpisah; kegagalan paket opsional tidak menghentikan remote.
 
 **Log terbaru:** [run Linux #42536911372](https://github.com/wawanwfs/RDP/actions/runs/42536911372) gagal di Tailscale karena `--accept-routes=false` dikirim dua kali (`flag provided multiple times`). Duplikat tersebut **sudah dihapus** pada [commit ee689ad](https://github.com/wawanwfs/RDP/commit/ee689ad539f4e89046495ffa4e2e967a6701b6d3). [CI Linux #42537213939](https://github.com/wawanwfs/RDP/actions/runs/42537213939) lulus tiga job, tetapi login Tailscale end-to-end dari klien lain masih perlu diuji pada workflow run baru.
 
 **Troubleshooting:** gunakan IP/URL dari run aktif; cek Tailscale ACL/grants, opsi remote dan port 3389/6082; gunakan F11 untuk fullscreen; hindari menutup proses runner; dan backup data karena job dibatasi total 360 menit termasuk instalasi. Untuk detail setiap input distro, desktop, username, hostname, dan password, baca [Linux README](linux/README.md) atau langsung [YAML Linux](.github/workflows/linux-remote-workspace.yml) dan [YAML Windows](.github/workflows/windows-remote-workspace-with-apps.yml).
 
 ---
+**Perbaikan xrdp Linux:** jika username diketik kapital seperti `RDP`, workflow akan menormalkannya menjadi `rdp`. Setup kemudian menguji akun Unix melalui `id/getent passwd` dan memverifikasi login **PAM xrdp-sesman** menggunakan secret `RDP_PASSWORD` sebelum endpoint dinyatakan siap. Untuk aplikasi Ubuntu, instalasi `npm` distro yang bentrok dengan NodeSource Node.js 22 sudah dihindari. Cache root di volume container dibersihkan dengan aman saat cleanup. [Detail audit dan kompatibilitas](linux/README.md).
+
 ## 🪟 Windows Remote Workspace
 
 ## ✨ Ringkasan

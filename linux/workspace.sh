@@ -89,7 +89,15 @@ start() {
   [ -s "$password_file" ] || die "Password file missing."
   local image="lscr.io/linuxserver/webtop:$WFS_DISTRO-$WFS_DESKTOP"
   notice "🐧 [2/5] Downloading selected desktop image: $image"
-  docker pull "$image"
+  # Registry throttling is intermittent on GitHub-hosted runners.
+  # Retry a small bounded number of times, without changing the selected tag.
+  local pulled=no
+  for attempt in 1 2 3 4; do
+    if docker pull "$image"; then pulled=yes; break; fi
+    notice "⚠️ Webtop registry pull failed attempt $attempt/4; retrying."
+    sleep $((attempt * 5))
+  done
+  [ "$pulled" = yes ] || die "Cannot pull $image after four attempts (check registry rate limits)."
   docker rm -f "$name" >/dev/null 2>&1 || true
   local -a rdp_args=()
   if [ "$WFS_REMOTE" = rdp ] || [ "$WFS_REMOTE" = both ]; then

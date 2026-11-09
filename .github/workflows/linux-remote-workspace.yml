@@ -110,10 +110,10 @@ on:
           - "same_each_run"
           - "unique_each_run"
       rdp_username:
-        description: "Username login RDP Linux (default rdp, dapat diubah)"
+        description: "Username login xrdp Linux (case-sensitive; default RDP sama seperti Windows)"
         required: true
         type: string
-        default: "rdp"
+        default: "RDP"
       web_username:
         description: "Username login desktop browser Selkies"
         required: true

@@ -344,12 +344,12 @@ EOF
 | Application group | Selection |
 |:--|:--|
 | Optional bundle | \`$WFS_APPS\` |
-| IDE | \`$WFS_IDE\` |
-| Video editor | \`$WFS_EDITOR\` |
-| MetaTrader | \`$WFS_METATRADER\` |
-| AI router | \`$WFS_ROUTER\` |
-| Coding agent | \`$WFS_CODING_AGENT\` |
-| AI agent | \`$WFS_AI_AGENT\` |
+| IDE | \`${WFS_IDE:-none}\` |
+| Video editor | \`${WFS_EDITOR:-none}\` |
+| MetaTrader | \`${WFS_METATRADER:-none}\` |
+| AI router | \`${WFS_ROUTER:-none}\` |
+| Coding agent | \`${WFS_CODING_AGENT:-none}\` |
+| AI agent | \`${WFS_AI_AGENT:-none}\` |
 | ArtCraft Launcher | \`$artcraft_selected\` |
 
 | Install step | Result |

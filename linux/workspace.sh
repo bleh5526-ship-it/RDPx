@@ -130,21 +130,49 @@ probe() {
   notice "Tailnet self-probe did not return 200 (received $code)."
   return 1
 }
+# Bind the fallback to the Tailscale 100.x interface only.
+# Tailscale Serve is optional; the tailnet itself remains required.
+start_tailnet_forwarder() {
+  local ip="$1" public_port="$2" local_port="$3" logfile="$state/forward-$public_port.log"
+  if ! command -v socat >/dev/null 2>&1; then
+    notice "Installing socat for private tailnet port forwarding."
+    timeout 95s sudo -n apt-get install -y -qq --no-install-recommends socat >/dev/null ||
+      die "Cannot install socat for private tailnet forwarding."
+  fi
+  if ! ip -4 addr show | grep -Fq "inet $ip/"; then
+    die "Tailscale IPv4 $ip not assigned to a local interface; direct tailnet forwarding unavailable."
+  fi
+  nohup socat "TCP-LISTEN:$public_port,bind=$ip,reuseaddr,fork" \
+    "TCP:127.0.0.1:$local_port,connect-timeout=8" \
+    > "$logfile" 2>&1 < /dev/null &
+  local pid=$!
+  echo "$pid" >> "$state/forwarder-pids"
+  sleep 2
+  kill -0 "$pid" 2>/dev/null ||
+    { cat "$logfile" >&2 || true; die "Tailnet TCP forwarder exited: $ip:$public_port"; }
+  python3 - "$ip" "$public_port" <<'PY'
+import socket, sys
+host, port = sys.argv[1], int(sys.argv[2])
+with socket.create_connection((host, port), timeout=5):
+    print(f"[WFS Linux] PASS: tailnet-only listener reachable on {host}:{port}")
+PY
+  notice "Tailnet-only TCP forwarder: $ip:$public_port -> 127.0.0.1:$local_port (pid $pid)."
+}
+
 publish() {
   validate
   command -v tailscale >/dev/null || die "Tailscale CLI is not installed."
-  local ip fqdn="" browser_url="" browser_transport=none rdp_address="" status
+  local ip fqdn="" browser_url="" browser_transport=none rdp_address=""
   ip=$(tailscale ip -4 | head -1)
   [[ "$ip" =~ ^100\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "No Tailscale IPv4."
-  timeout 15s tailscale serve reset >/dev/null 2>&1 || true
+  tailscale status --json >/dev/null || die "Tailscale is not connected."
 
   if [ "$WFS_REMOTE" = novnc ] || [ "$WFS_REMOTE" = both ]; then
-    browser_transport=tailnet_tls_tcp
     if [ "$WFS_TRANSPORT" != tailnet_tls_tcp ]; then
       fqdn=$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))')
       if [[ "$fqdn" =~ \.ts\.net$ ]]; then
-        notice "Attempting tailnet HTTPS 443 (max 75 seconds)."
-        if timeout 75s tailscale serve --bg --yes --https=443 http://127.0.0.1:13000; then
+        notice "Trying optional Tailscale HTTPS Serve 443 (max 12 seconds)."
+        if timeout 12s sudo -n tailscale serve --bg --yes --https=443 http://127.0.0.1:13000 >/dev/null 2>&1; then
           if probe "https://$fqdn/" trusted; then
             browser_url="https://$fqdn/"
             browser_transport=tailnet_https
@@ -152,44 +180,34 @@ publish() {
         fi
       fi
       if [ "$browser_transport" != tailnet_https ] && [ "$WFS_TRANSPORT" = tailnet_https ]; then
-        die "Trusted Tailscale HTTPS unavailable; choose auto or enable HTTPS Certificates."
+        die "Tailscale HTTPS requires admin-enabled Serve and HTTPS Certificates. Choose auto or tailnet_tls_tcp for private-IP fallback."
       fi
     fi
-    if [ "$browser_transport" = tailnet_tls_tcp ]; then
-      timeout 15s tailscale serve reset >/dev/null 2>&1 || true
-      timeout 30s tailscale serve --bg --yes --tcp=6082 tcp://127.0.0.1:13001
+    if [ "$browser_transport" != tailnet_https ]; then
+      # Admin consent for Serve is NOT required for a port bound to the
+      # machine's Tailscale IP. The app itself still requires web auth.
+      start_tailnet_forwarder "$ip" 6082 13001
       browser_url="https://$ip:6082/"
-      if ! probe "$browser_url" selfsigned; then
-        notice "Local Tailscale-IP self-probe failed; checking Serve mapping instead."
-      fi
+      browser_transport=tailnet_tls_tcp
+      probe "$browser_url" selfsigned ||
+        die "Authenticated Webtop HTTPS did not respond on the private tailnet-IP forwarder."
     fi
   fi
 
   if [ "$WFS_REMOTE" = rdp ] || [ "$WFS_REMOTE" = both ]; then
-    [ "${WFS_RDP_READY:-0}" = 1 ] || die "xrdp backend not verified."
-    timeout 30s tailscale serve --bg --yes --tcp=3389 tcp://127.0.0.1:13389
+    [ "${WFS_RDP_READY:-0}" = 1 ] || die "Native xrdp was not verified."
+    start_tailnet_forwarder "$ip" 3389 13389
     rdp_address="$ip:3389"
   fi
 
-  status=$(timeout 15s tailscale serve status)
-  if [ "$WFS_REMOTE" = rdp ] || [ "$WFS_REMOTE" = both ]; then
-    [[ "$status" == *3389* && "$status" == *13389* ]] || die "RDP Serve 3389 -> 13389 not verified."
-  fi
-  if [ "$WFS_REMOTE" = novnc ] || [ "$WFS_REMOTE" = both ]; then
-    if [ "$browser_transport" = tailnet_tls_tcp ]; then
-      [[ "$status" == *6082* && "$status" == *13001* ]] || die "Web Serve 6082 -> 13001 not verified."
-    else
-      [[ "$status" == *443* && "$status" == *13000* ]] || die "HTTPS Serve 443 -> 13000 not verified."
-    fi
-  fi
   {
     echo "WFS_LINUX_IP=$ip"
     echo "WFS_LINUX_URL=$browser_url"
     echo "WFS_RDP_ADDRESS=$rdp_address"
     echo "WFS_ACTIVE_TRANSPORT=$browser_transport"
   } >> "$GITHUB_ENV"
-  notice "Tailscale private RDP: ${rdp_address:-disabled}. Web: ${browser_url:-disabled}."
-  notice "Credentials: $WFS_RDP_USERNAME / RDP_PASSWORD and $WFS_WEB_USERNAME / VNC_PASSWORD (mode in Summary)."
+  notice "Private RDP: ${rdp_address:-disabled}; private browser: ${browser_url:-disabled}."
+  notice "Forwarded ports bind to Tailscale 100.x only; no public listener or Funnel."
   [ -z "$browser_url" ] || echo "::notice title=Linux Web Remote::$browser_url"
   [ -z "$rdp_address" ] || echo "::notice title=Linux Native RDP::$rdp_address"
 }
@@ -248,9 +266,14 @@ keepalive() {
   notice "Session duration completed."
 }
 cleanup() {
+  if [ -f "$state/forwarder-pids" ]; then
+    while read -r pid; do
+      [[ "$pid" =~ ^[0-9]+$ ]] && kill "$pid" 2>/dev/null || true
+    done < "$state/forwarder-pids"
+  fi
   docker rm -f "$name" >/dev/null 2>&1 || true
   rm -rf "$state"
-  notice "Container/secret cleaned up. Tailscale GitHub Action logs out in its post-step."
+  notice "Container, private TCP forwarders and secret files cleaned up. Tailscale action handles logout."
 }
 case "$1" in
   prepare) prepare;; start) start;; publish) publish;; summary) summary;;

@@ -242,7 +242,7 @@ summary() {
   local artcraft_selected="${WFS_ARTCRAFT_SELECTED:-false}"
 
   if [ "$WFS_REMOTE" = rdp ] || [ "$WFS_REMOTE" = both ]; then
-    rdp_state="✅ xrdp X.224 handshake + private TCP listener verified (GUI login not tested)"
+    rdp_state="✅ Linux account + xrdp PAM authentication + X.224/TCP verified (GUI session not yet tested)"
   fi
   if [ "$WFS_REMOTE" = novnc ] || [ "$WFS_REMOTE" = both ]; then
     web_state="✅ Webtop HTTPS HTTP 200 with authentication, verified from runner"

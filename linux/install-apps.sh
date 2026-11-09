@@ -101,7 +101,8 @@ esac
 case "$WFS_APPS" in media|all) install_pkg "GIMP" "gimp" "gimp"; install_pkg "VLC" "vlc" "vlc" ;; esac
 case "$WFS_IDE" in vscode|both) install_vscode ;; esac
 case "$WFS_IDE" in antigravity|both)
-  record "Google Antigravity IDE" "MANUAL (official Linux GUI download; unattended package not verified)" ;;
+  if bash linux/install-antigravity.sh; then record "Antigravity IDE" "INSTALLED (official Linux IDE tarball and desktop launcher verified; Google download lacks published SHA256)"
+  else record "Antigravity IDE" "FAILED (official Google Linux tarball download/extract or binary missing)"; fi ;;
 esac
 case "$WFS_EDITOR" in shotcut|both) install_pkg "Shotcut" "shotcut" "shotcut" ;; esac
 case "$WFS_EDITOR" in capcut|both)
@@ -118,7 +119,8 @@ case "$WFS_ROUTER" in omniroute|both) install_npm "OmniRoute" "omniroute" "omnir
 case "$WFS_CODING_AGENT" in codex|both) install_npm "Codex CLI" "@openai/codex" "codex" ;; esac
 case "$WFS_CODING_AGENT" in claude|both) install_npm "Claude Code" "@anthropic-ai/claude-code" "claude" ;; esac
 case "$WFS_AI_AGENT" in hermes|both|all)
-  record "Hermes Agent" "MANUAL (official Linux setup/authentication required)" ;;
+  if bash linux/install-hermes.sh; then record "Hermes Agent" "INSTALLED (official Linux CLI verified; model login still required)"
+  else record "Hermes Agent" "FAILED (official stable installer or CLI verification)"; fi ;;
 esac
 case "$WFS_AI_AGENT" in openclaw|both|all)
   install_npm "OpenClaw" "openclaw" "openclaw" ;;

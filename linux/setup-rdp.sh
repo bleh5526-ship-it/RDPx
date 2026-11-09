@@ -3,7 +3,7 @@
 # Account names are case-sensitive. In particular, RDP is NOT rdp.
 set -Eeuo pipefail
 die() { printf '::error::[WFS xrdp] %s\n' "$*" >&2; exit 1; }
-info() { printf '[WFS Linux xrdp] %s\n' "$*; }
+info() { printf '[WFS Linux xrdp] %s\n' "$*"; }
 case "$WFS_REMOTE" in
   novnc) info "Browser-only mode; no xrdp needed."; exit 0 ;;
   rdp|both) ;;

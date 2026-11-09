@@ -233,7 +233,7 @@ jobs:
       - name: "📦 Install optional Linux application bundle"
         id: apps
         if: inputs.apps_bundle != 'none' || inputs.ide_choice != 'none' || inputs.editor_choice != 'none' || inputs.metatrader_choice != 'none' || inputs.router_choice != 'none' || inputs.coding_agent_choice != 'none' || inputs.ai_agent_choice != 'none'
-        timeout-minutes: 18
+        timeout-minutes: 25
         continue-on-error: true
         run: bash linux/install-apps.sh
 

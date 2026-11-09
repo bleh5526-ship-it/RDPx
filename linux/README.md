@@ -40,7 +40,7 @@ Tabel di atas adalah **kombinasi image desktop untuk browser**. Penggunaan nativ
 | `novnc` | Browser (sebenarnya **Selkies Webtop**, bukan VNC tradisional) | HTTPS `443` atau TLS/TCP `6082` | Username `web_username` + `VNC_PASSWORD` |
 | `both` | **Kedua akses di atas sekaligus** | TCP `3389` **dan** port web terpilih | Password terpisah untuk masing-masing akses |
 
-**RDP dan browser merupakan dua sesi desktop yang berbeda**, tidak mencerminkan layar yang sama. Container hanya mengikat port backend pada `127.0.0.1`; Tailscale Serve meneruskan port yang dipilih melalui tailnet, tanpa Cloudflare/Funnel/port forwarding internet.
+**RDP dan browser merupakan dua sesi desktop yang berbeda**, tidak mencerminkan layar yang sama. Container mengikat port backend pada `127.0.0.1`. Saat Tailscale Serve belum diaktifkan oleh admin tailnet, workflow **langsung meneruskan port 6082 (HTTPS browser) dan/atau 3389 (xrdp) pada alamat IPv4 Tailscale runner saja (`100.x.x.x`)**, bukan pada `0.0.0.0` atau internet publik. Tailscale Serve HTTPS 443 tetap opsional. Tidak menggunakan Cloudflare, Funnel, maupun port forwarding router.
 
 Pada mode web, layanan otomatis menyesuaikan ukuran browser. Fullscreen monitor tetap memakai **F11** atau kontrol fullscreen browser.
 
@@ -106,7 +106,7 @@ Angka `$RunId` adalah nomor dari URL Actions run Anda, **bukan** commit SHA atau
 4. Tunggu **Publish selected private RDP and/or web endpoints through Tailscale**. Lihat **Actions Summary** untuk IP RDP, URL web, username dan jenis password. Jangan memakai URL runner lama.
 5. Untuk RDP: di Windows tekan `Win + R` → `mstsc` → masukkan `100.x.x.x:3389` → login dengan `rdp_username` dan password RDP. Untuk web: buka URL HTTPS dan login dengan `web_username` dan password VNC.
 
-Mode `transport=auto` mencoba Tailscale HTTPS `443` lalu fallback HTTPS Webtop pada TCP `6082`. Fallback menggunakan sertifikat self-signed Webtop, sehingga bisa menampilkan peringatan browser. Pastikan IP sesuai Summary. Pilih `tailnet_https` hanya bila HTTPS Certificates/MagicDNS aktif di tailnet.
+Mode `transport=auto` mencoba Tailscale HTTPS Serve `443` sebentar (**maksimal 12 detik**). Jika Serve tidak diaktifkan/diizinkan di tailnet, workflow **langsung menggunakan HTTPS Webtop pada IP Tailscale privat port `6082` tanpa Tailscale Serve**. Fallback menggunakan sertifikat Webtop self-signed sehingga browser mungkin menampilkan peringatan; pastikan IP sesuai Actions Summary. Native xrdp di mode `rdp`/`both` diteruskan pada **IP Tailscale port `3389`** secara privat. `tailnet_https` khusus untuk pengguna yang sudah mengaktifkan Serve + HTTPS Certificates/MagicDNS di tailnet.
 
 ## 📦 Aplikasi — kategori sama dengan Windows
 
@@ -133,7 +133,7 @@ RDP dan web hanya bisa dijangkau dari **tailnet** yang memiliki izin ACL/grants 
 
 ## 🧪 Pengujian dan troubleshooting
 
-Pengujian otomatis yang tersedia memvalidasi workflow YAML, shell, pemakaian secret, dan melakukan smoke test Webtop Debian Xfce pada port loopback. **RDP lintas perangkat dan seluruh 20 kombinasi distro/desktop belum dinyatakan lulus** kecuali sudah terbukti lewat run tersendiri.
+Pengujian otomatis memvalidasi YAML/Bash, password mode, desktop Debian Xfce, dan xrdp handshake. **Run integrasi nyata [#42538689043](https://github.com/wawanwfs/RDP/actions/runs/42538689043) berhasil 4/4 job:** runner masuk tailnet, HTTPS browser di `100.x.x.x:6082` lolos autentikasi, port xrdp `3389` merespons, dan kedua listener tetap aktif antarlangkah Actions. **Login GUI dari perangkat lain, koneksi RDP sampai desktop siap, serta seluruh 20 kombinasi belum diverifikasi**; pengujian tersebut masih perlu dilakukan oleh pengguna.
 
 ```powershell
 # Ganti dengan IP Tailscale dari Actions Summary run aktif.
@@ -142,7 +142,7 @@ Test-NetConnection 100.x.x.x -Port 3389  # hanya rdp / both
 Test-NetConnection 100.x.x.x -Port 6082  # hanya web TCP fallback
 ```
 
-Jika RDP error, periksa langkah **Start native Linux xrdp server**. Paket xrdp/Xorg bergantung pada repositori distro dan sesi RDP Xfce. Jika web gagal, lihat status Tailscale Serve dan log container Webtop. Untuk masalah paket tertentu, baca tabel aplikasi di Summary.
+Jika RDP error, periksa langkah **Start native Linux xrdp server** dan **Publish private ... endpoints**; paket xrdp/Xorg bergantung repositori distro dan sesi RDP Xfce. Jika web gagal, cek log publikasi port, `ss -ltn` pada runner, autentikasi dan log container Webtop. **Tailscale Serve tidak wajib** untuk port privat `6082`/`3389`. Periksa ACL/grants tailnet jika koneksi dari perangkat lain gagal. Untuk paket aplikasi, baca tabel di Summary.
 
 ---
 

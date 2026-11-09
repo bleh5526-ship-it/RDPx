@@ -50,7 +50,7 @@ jobs:
           assert inputs["hostname_mode"]["default"] == "same_each_run"
           assert inputs["rdp_password_mode"]["options"] == ["same_from_secret", "random_each_run"]
           assert inputs["vnc_password_mode"]["options"] == ["same_from_secret", "random_each_run"]
-          assert inputs["rdp_username"]["default"] == "rdp"
+          assert inputs["rdp_username"]["default"] == "RDP"
           assert inputs["tailscale_hostname"]["default"] == "rdp-runner"
           assert inputs["web_username"]["default"] == "wfs"
           assert len(inputs) <= 25
@@ -88,6 +88,14 @@ jobs:
           assert "pamtester xrdp-sesman" in xrdp_setup
           assert "getent passwd" in xrdp_setup
           assert "id \"$username\"" in xrdp_setup
+          assert "xfdesktop4 xfwm4" in xrdp_setup
+          assert "wfs-xrdp-xfce-session" in xrdp_setup
+          assert "dbus-run-session -- xfce4-session" in xrdp_setup
+          chrome_source = pathlib.Path("linux/install-chrome.sh").read_text(encoding="utf-8")
+          assert "hlkenndednhfkekhgcdicdfddnkalmdm" in chrome_source
+          assert "fdpohaocaechififmbbbbbknoalclacl" in chrome_source
+          assert "ExtensionInstallForcelist" in chrome_source
+          assert "bash linux/install-chrome.sh" in text
           assert pathlib.Path("linux/install-antigravity.sh").is_file()
           assert pathlib.Path("linux/install-hermes.sh").is_file()
           apps_source = pathlib.Path("linux/install-apps.sh").read_text(encoding="utf-8")
@@ -115,7 +123,7 @@ jobs:
       WFS_REMOTE: novnc
       WFS_HOSTNAME_BASE: rdp-runner
       WFS_HOSTNAME_MODE: same_each_run
-      WFS_RDP_USERNAME: rdp
+      WFS_RDP_USERNAME: RDP
       WFS_WEB_USERNAME: wfs
       WFS_RDP_PASSWORD_MODE: same_from_secret
       WFS_VNC_PASSWORD_MODE: same_from_secret
@@ -177,7 +185,8 @@ jobs:
           test "$(wc -c < "$RUNNER_TEMP/wfs-linux/rdp-password")" -eq 24
           test "$(cat "$RUNNER_TEMP/wfs-linux/web-password")" = "CI-VNC-ONLY-NOT-PRODUCTION-2026"
           grep -Fx "WFS_HOSTNAME=wfs-ci-$GITHUB_RUN_ID" "$GITHUB_ENV"
-          grep -Fx "WFS_RDP_USERNAME=rdp" "$GITHUB_ENV"
+          test "$WFS_RDP_USERNAME" = "RDP"
+          ! grep -q "^WFS_RDP_USERNAME=rdp$" "$GITHUB_ENV"
           echo 'PASS: two independent passwords, deterministic per-run RDP mode, hostname and preserved web secret.'
 
       - name: "🖥️ Launch Webtop and native Xorg xrdp"
@@ -209,7 +218,7 @@ jobs:
       WFS_REMOTE: both
       WFS_HOSTNAME_BASE: wfs-ci-tailnet
       WFS_HOSTNAME_MODE: unique_each_run
-      WFS_RDP_USERNAME: rdp
+      WFS_RDP_USERNAME: RDP
       WFS_WEB_USERNAME: webci
       WFS_RDP_PASSWORD_MODE: random_each_run
       WFS_VNC_PASSWORD_MODE: same_from_secret
@@ -299,7 +308,7 @@ jobs:
       WFS_REMOTE: novnc
       WFS_HOSTNAME_BASE: wfs-apps-ci
       WFS_HOSTNAME_MODE: unique_each_run
-      WFS_RDP_USERNAME: rdp
+      WFS_RDP_USERNAME: RDP
       WFS_WEB_USERNAME: wfs
       WFS_RDP_PASSWORD_MODE: same_from_secret
       WFS_VNC_PASSWORD_MODE: same_from_secret
@@ -322,6 +331,8 @@ jobs:
           set -euo pipefail
           bash linux/workspace.sh start
           bash linux/install-apps.sh
+          bash linux/install-chrome.sh
+          docker exec -u 0 wfs-linux-webtop /bin/sh -c 'command -v google-chrome-stable && grep -Fq "ExtensionInstallForcelist" /etc/opt/chrome/policies/managed/wfs-required-extensions.json'
           docker exec -u 0 wfs-linux-webtop /bin/sh -c 'command -v npm && command -v node && command -v 9router && command -v codex'
           grep -F $'9Router\tINSTALLED' "$RUNNER_TEMP/wfs-linux/apps-status.tsv"
           grep -F $'Codex CLI\tINSTALLED' "$RUNNER_TEMP/wfs-linux/apps-status.tsv"

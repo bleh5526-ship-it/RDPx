@@ -486,7 +486,12 @@ cleanup() {
     done < "$state/forwarder-pids"
   fi
   docker rm -f "$name" >/dev/null 2>&1 || true
-  rm -rf "$state"
+  # /config is a bind mount. Package managers and npm create root-owned
+  # caches in this disposable directory. Delete ONLY the exact runner-temp
+  # workspace with elevated privileges to prevent permission-denied cleanup.
+  if [ -n "$RUNNER_TEMP" ] && [ "$state" = "$RUNNER_TEMP/wfs-linux" ] && [ -d "$state" ]; then
+    sudo -n rm -rf -- "$state" || die "Cleanup could not delete temporary workspace $state"
+  fi
   notice "Container, private TCP forwarders and secret files cleaned up. Tailscale action handles logout."
 }
 case "$1" in

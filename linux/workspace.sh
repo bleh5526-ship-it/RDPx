@@ -19,7 +19,7 @@ validate() {
   case "$WFS_RDP_PASSWORD_MODE" in random_each_run|same_from_secret) ;; *) die "Invalid RDP password mode";; esac
   case "$WFS_VNC_PASSWORD_MODE" in random_each_run|same_from_secret) ;; *) die "Invalid VNC password mode";; esac
   [[ "$WFS_HOSTNAME_BASE" =~ ^[a-z][a-z0-9-]{0,39}$ ]] || die "Hostname must be 1–40 chars: lowercase letters, numbers and hyphens."
-  [[ "$WFS_RDP_USERNAME" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] || die "Invalid Linux RDP username."
+  [[ "$WFS_RDP_USERNAME" =~ ^[a-zA-Z_][a-zA-Z0-9_-]{0,30}$ ]] || die "Invalid Linux RDP username (letters, digits, underscore, hyphen; case-sensitive)."
   [[ "$WFS_WEB_USERNAME" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] || die "Invalid Linux web username."
   if [ "$WFS_DISTRO" = arch ] && [ "$WFS_REMOTE" != novnc ]; then
     die "Arch xrdp requires AUR; choose Debian/Ubuntu/Fedora/Alpine for native RDP or novnc for Arch."
@@ -30,12 +30,7 @@ validate() {
   fi
 }
 prepare() {
-  # Normalize Windows-style uppercase "RDP" into a real Linux account name.
-  if [ "$WFS_RDP_USERNAME" != "${WFS_RDP_USERNAME,,}" ]; then
-    WFS_RDP_USERNAME="${WFS_RDP_USERNAME,,}"
-    echo "WFS_RDP_USERNAME=$WFS_RDP_USERNAME" >> "$GITHUB_ENV"
-    notice "Normalized the RDP username to lowercase: $WFS_RDP_USERNAME."
-  fi
+  # Linux usernames are case-sensitive. Keep RDP distinct from rdp.
   validate
   umask 077
   mkdir -p "$config"

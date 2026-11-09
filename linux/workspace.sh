@@ -214,44 +214,202 @@ publish() {
 }
 
 summary() {
+  local rdp_state="⏭️ Not selected" web_state="⏭️ Not selected"
+  local transport_label="Not selected" artcraft_state="⏭️ Not selected"
+  local apps_state="⏭️ Not selected"
+  local image_digest="${WFS_IMAGE_ID:-not recorded}"
+  local run_url="https://github.com/${GITHUB_REPOSITORY:-wawanwfs/RDP}/actions/runs/${GITHUB_RUN_ID:-0}"
+  local rdp_url="${WFS_RDP_ADDRESS:-}"
+  local web_url="${WFS_LINUX_URL:-}"
+  local ip="${WFS_LINUX_IP:-not assigned}"
+  local transport="${WFS_ACTIVE_TRANSPORT:-none}"
+  local app_step="${WFS_APPS_STEP_OUTCOME:-skipped}"
+  local artcraft_step="${WFS_ARTCRAFT_STEP_OUTCOME:-skipped}"
+  local artcraft_selected="${WFS_ARTCRAFT_SELECTED:-false}"
+
+  if [ "$WFS_REMOTE" = rdp ] || [ "$WFS_REMOTE" = both ]; then
+    rdp_state="✅ xrdp X.224 handshake + private TCP listener verified (GUI login not tested)"
+  fi
+  if [ "$WFS_REMOTE" = novnc ] || [ "$WFS_REMOTE" = both ]; then
+    web_state="✅ Webtop HTTPS HTTP 200 with authentication, verified from runner"
+  fi
+  case "$transport" in
+    tailnet_https) transport_label="✅ Tailscale Serve HTTPS 443 — verified certificate" ;;
+    tailnet_tls_tcp) transport_label="✅ Direct Tailscale IP TCP 6082 → Webtop HTTPS (self-signed)" ;;
+    none) transport_label="Not selected" ;;
+    *) transport_label="⚠️ Unknown: $transport" ;;
+  esac
+  case "$app_step" in
+    success) apps_state="✅ Step completed; see individual app results below" ;;
+    failure) apps_state="⚠️ Step failed; desktop remote remains available" ;;
+    skipped) apps_state="⏭️ Not selected" ;;
+    *) apps_state="ℹ️ $app_step" ;;
+  esac
+  if [ "$artcraft_selected" = true ]; then
+    if [ "$WFS_DISTRO" = alpine ]; then
+      artcraft_state="⚠️ Unsupported on Alpine (no native package)"
+    else
+      case "$artcraft_step" in
+        success) artcraft_state="✅ Installer step completed; launch app to verify GUI" ;;
+        failure) artcraft_state="❌ Installer step failed; see ArtCraft step log" ;;
+        *) artcraft_state="⚠️ Installer step not executed: $artcraft_step" ;;
+      esac
+    fi
+  fi
+
+  # All interpolated metadata below comes from validated workflow choices,
+  # trusted GitHub runner variables, and previously verified Tailscale status.
   cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-## 🐧 Linux Remote Workspace — READY
+# 🐧 WFS Linux Remote Workspace Dashboard
+
+> ✅ **REMOTE READY — private Tailscale connection configured.** Desktop services are responding from the runner. Check the URL from this active run; external-device login is not tested here.
+
+## 🎯 Recommended Login
+
+EOF
+  if [ -n "$rdp_url" ]; then
+    cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+### 🖥️ Microsoft Remote Desktop / xrdp
+
+| RDP access | Connection details |
+|:--|:--|
+| **RDP address** | \`$rdp_url\` |
+| **Username** | \`$WFS_RDP_USERNAME\` |
+| **Password** | GitHub Secret \`RDP_PASSWORD\` — \`$WFS_RDP_PASSWORD_MODE\` |
+| **Service health** | $rdp_state |
+| **Session** | Independent Xorg/Xfce session, separate from web |
+
+**How to connect:** Open Windows \`mstsc\` → enter \`$rdp_url\` → login as \`$WFS_RDP_USERNAME\`.
+
+EOF
+  fi
+  if [ -n "$web_url" ]; then
+    cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+### 🌐 Browser Remote / Selkies (noVNC equivalent)
+
+| Browser access | Connection details |
+|:--|:--|
+| **Open browser desktop** | [$web_url]($web_url) |
+| **Username** | \`$WFS_WEB_USERNAME\` |
+| **Password** | GitHub Secret \`VNC_PASSWORD\` — \`$WFS_VNC_PASSWORD_MODE\` |
+| **Requested transport** | \`$WFS_TRANSPORT\` |
+| **Active transport** | $transport_label |
+| **Service health** | $web_state |
+| **Desktop fit** | Selkies automatic resize; use browser F11 for fullscreen |
+
+EOF
+    if [ "$transport" = tailnet_tls_tcp ]; then
+      cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+> ⚠️ **Certificate notice:** port 6082 forwards Webtop's self-signed HTTPS directly over the private Tailscale IP. A browser certificate warning is possible; confirm the address matches this run. Tailscale Serve is **not required** for this fallback.
+
+EOF
+    fi
+  fi
+
+  cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+## 🔗 Connection & Runner Details
 
 | Setting | Value |
 |:--|:--|
+| GitHub Actions run | [Open this run]($run_url) |
 | Distro / desktop | **$WFS_DISTRO / $WFS_DESKTOP** |
-| Image | $WFS_IMAGE |
-| Remote choice | **$WFS_REMOTE** |
-| Tailscale hostname | **$WFS_HOSTNAME** |
-| **Native RDP address (mstsc)** | ${WFS_RDP_ADDRESS:-Not enabled} |
-| RDP username | **$WFS_RDP_USERNAME** |
-| RDP password | **$WFS_RDP_PASSWORD_MODE** from RDP_PASSWORD |
-| **Browser address (Selkies/noVNC equivalent)** | ${WFS_LINUX_URL:-Not enabled} |
-| Browser username | **$WFS_WEB_USERNAME** |
-| Browser password | **$WFS_VNC_PASSWORD_MODE** from VNC_PASSWORD |
-| Web transport | ${WFS_ACTIVE_TRANSPORT:-none} |
-| Browser resolution | Automatic Selkies resizing |
-| Optional apps | $WFS_APPS |
-| Selected duration | $WFS_DURATION hour(s), GitHub job maximum 360 minutes |
+| Host runner | Ubuntu 24.04 (ephemeral) |
+| Container image | \`${WFS_IMAGE:-unknown}\` |
+| Container image digest | \`$image_digest\` |
+| **Tailscale hostname** | \`${WFS_HOSTNAME:-unknown}\` |
+| **Tailscale IPv4** | \`$ip\` |
+| Hostname mode | \`$WFS_HOSTNAME_MODE\` |
+| Selected remote | \`$WFS_REMOTE\` |
+| Requested browser transport | \`$WFS_TRANSPORT\` |
+| Active browser transport | \`$transport\` |
+| Browser port | ${web_url:+6082 TCP or 443 HTTPS — private tailnet} |
+| RDP port | ${rdp_url:+3389 TCP — private tailnet} |
+| Authentication | Separate \`RDP_PASSWORD\` / \`VNC_PASSWORD\` GitHub Secrets; values never shown |
+| Session duration | **$WFS_DURATION hour(s)** requested after setup |
+| GitHub Actions hard timeout | **360 minutes total**, including preparation |
 
-**RDP and browser are separate desktop sessions.**
-Both endpoints are restricted to the Tailscale tailnet.
+## 🧪 Service Health
+
+| Health check | Result |
+|:--|:--|
+| Container & authenticated localhost HTTPS | ✅ Passed |
+| Tailscale authenticated node | ✅ Connected |
+| Browser HTTPS via private Tailscale endpoint | $web_state |
+| Native RDP TCP/X.224 | $rdp_state |
+| Port exposure | Bound to runner loopback / Tailscale IP only, not public internet |
+| External-device graphical login | ⏳ Not verified — test from your own connected device |
+
+## 📦 Selected Applications & Install Status
+
+| Application group | Selection |
+|:--|:--|
+| Optional bundle | \`$WFS_APPS\` |
+| IDE | \`$WFS_IDE\` |
+| Video editor | \`$WFS_EDITOR\` |
+| MetaTrader | \`$WFS_METATRADER\` |
+| AI router | \`$WFS_ROUTER\` |
+| Coding agent | \`$WFS_CODING_AGENT\` |
+| AI agent | \`$WFS_AI_AGENT\` |
+| ArtCraft Launcher | \`$artcraft_selected\` |
+
+| Install step | Result |
+|:--|:--|
+| Optional apps | $apps_state |
+| ArtCraft Launcher | $artcraft_state |
+
 EOF
-  if [ "${WFS_ACTIVE_TRANSPORT:-none}" = tailnet_tls_tcp ]; then
-    echo 'The browser fallback on TCP 6082 uses a self-signed HTTPS certificate. Use trusted HTTPS 443 to avoid a certificate warning.' >> "$GITHUB_STEP_SUMMARY"
-  fi
-  if [ -f "$state/apps-status.tsv" ]; then
+
+  if [ -s "$state/apps-status.tsv" ]; then
     {
+      echo '### 🔎 Per-Application Results'
       echo
-      echo '### Selected applications'
-      echo '| App | Status |'
+      echo '| Application | Actual installation status / compatibility |'
       echo '|:--|:--|'
       while IFS=$'\t' read -r app result; do
+        # Sanitize Markdown delimiters in package-manager diagnostic fields.
+        app=${app//|/\/}
+        result=${result//|/\/}
         printf '| %s | %s |\n' "$app" "$result"
       done < "$state/apps-status.tsv"
+      echo
     } >> "$GITHUB_STEP_SUMMARY"
+  else
+    echo '> No per-app installer results were recorded. Optional applications may have been omitted or the installer may not have run.' >> "$GITHUB_STEP_SUMMARY"
+    echo >> "$GITHUB_STEP_SUMMARY"
   fi
-  echo 'The selected distro runs inside a temporary container on GitHub Ubuntu 24.04. Do not terminate the runner; use Disconnect or Cancel workflow.' >> "$GITHUB_STEP_SUMMARY"
+
+  cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+## 🚀 How to Connect
+
+1. Connect your own PC/mobile device to the **same Tailscale tailnet**.
+2. Use the **RDP address** above in Microsoft Remote Desktop, or click the **Browser Remote** URL above (depending on selected access mode).
+3. Enter the selected username and password from the relevant GitHub Secret. For \`random_each_run\`, derive the password locally using the [Linux password guide](https://github.com/${GITHUB_REPOSITORY:-wawanwfs/RDP}/blob/main/linux/README.md); random passwords are deliberately **not printed in public logs**.
+4. Keep this Actions job running while you are connected. Closing an RDP session or browser tab does not stop the runner.
+
+## 🧯 Troubleshooting
+
+| Problem | What to check |
+|:--|:--|
+| Hostname does not resolve | Use private Tailscale IP \`$ip\` from **this run** |
+| Browser shows HTTPS certificate warning | Expected on self-signed fallback \`6082\`; use trusted Tailscale HTTPS 443 if enabled |
+| Browser cannot connect | Tailnet access rules, browser password, selected transport, and the container health step |
+| xrdp login fails | Username \`$WFS_RDP_USERNAME\`, \`RDP_PASSWORD\`/password mode, Xorg session logs |
+| RDP and browser show different desktops | Expected: xrdp and Selkies run separate sessions |
+| Port is unreachable from your device | Verify Tailscale ACL/grants, \`tailscale ping $ip\`, and selected private port |
+| Optional application missing | Check the per-app status above and relevant install step logs |
+| Session URL stopped working | GitHub Actions run ended/cancelled; ephemeral runner and IP are gone |
+
+## 🧹 Keep Alive & Cleanup
+
+- This workflow intentionally stays **in progress** during a remote session. Keep Alive prints remaining time and health once per minute.
+- **1 / 3 / 6 hours** are requested session lengths; the GitHub job has a strict **360-minute total timeout** (setup counts).
+- Use **Cancel workflow** to terminate the session. Cleanup stops container, private TCP forwarders, and temporary password files.
+- The selected Linux distro is a **container** on Ubuntu, not a separate kernel/VM. Back up anything important before the runner ends.
+
+[📖 Linux setup guide](https://github.com/${GITHUB_REPOSITORY:-wawanwfs/RDP}/blob/main/linux/README.md) · [🪟 Windows workflow](https://github.com/${GITHUB_REPOSITORY:-wawanwfs/RDP}/actions/workflows/windows-remote-workspace-with-apps.yml)
+EOF
+  notice "✅ Linux Dashboard Summary generated (credentials masked)."
+  notice "📊 Actions run: $run_url"
 }
 
 keepalive() {

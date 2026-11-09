@@ -46,25 +46,31 @@ VSCODE
 node_ready=no
 ensure_node() {
   [ "$node_ready" = yes ] && return 0
-  case "$distro" in
-    arch) dependencies="nodejs npm" ;;
-    *) dependencies="nodejs npm" ;;
-  esac
-  pkg "$dependencies" >/dev/null 2>&1 || true
-  if docker exec -u 0 wfs-linux-webtop /bin/sh -c 'command -v npm >/dev/null && command -v node >/dev/null'; then
-    node_ready=yes
-    return 0
+  # NodeSource Node.js 22 ships npm with nodejs, so NEVER install Debian/Ubuntu
+  # apt package npm separately; it conflicts with NodeSource (run #42657742380).
+  if [ "$distro" = debian ] || [ "$distro" = ubuntu ]; then
+    if ! docker exec -u 0 wfs-linux-webtop /bin/sh -c 'command -v node >/dev/null && command -v npm >/dev/null'; then
+      docker exec -u 0 wfs-linux-webtop /bin/sh -c \
+        'DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall nodejs' || return 1
+    fi
+  else
+    docker exec -u 0 wfs-linux-webtop /bin/sh -c 'command -v node >/dev/null && command -v npm >/dev/null' ||
+      pkg "nodejs npm" || return 1
   fi
-  return 1
+  docker exec -u 0 wfs-linux-webtop /bin/sh -c \
+    'command -v node >/dev/null && command -v npm >/dev/null && node -e "process.exit(parseInt(process.versions.node,10)>=20?0:1)" && npm --version >/dev/null' || return 1
+  node_ready=yes
+  say "Node runtime ready: $(docker exec -u 0 wfs-linux-webtop node --version)"
+  return 0
 }
 install_npm() {
   local title="$1" package="$2" binary="$3"
-  if ! ensure_node; then record "$title" "FAILED (Node.js/npm unavailable)"; return 0; fi
-  if docker exec -u 0 wfs-linux-webtop npm install -g --no-audit --no-fund "$package" &&
+  if ! ensure_node; then record "$title" "FAILED (Node >=20/npm not available)"; return 0; fi
+  if timeout 210 docker exec -u 0 wfs-linux-webtop npm install -g --no-audit --no-fund "$package" &&
      docker exec -u 0 wfs-linux-webtop /bin/sh -c "command -v $binary >/dev/null"; then
-    record "$title" "INSTALLED (npm package: $package)"
+    record "$title" "INSTALLED (npm package $package, CLI $binary verified)"
   else
-    record "$title" "FAILED (npm package/runtime)"
+    record "$title" "FAILED (npm install or CLI verification)"
   fi
 }
 case "$WFS_APPS" in

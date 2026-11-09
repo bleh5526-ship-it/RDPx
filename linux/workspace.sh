@@ -30,6 +30,12 @@ validate() {
   fi
 }
 prepare() {
+  # Normalize Windows-style uppercase "RDP" into a real Linux account name.
+  if [ "$WFS_RDP_USERNAME" != "${WFS_RDP_USERNAME,,}" ]; then
+    WFS_RDP_USERNAME="${WFS_RDP_USERNAME,,}"
+    echo "WFS_RDP_USERNAME=$WFS_RDP_USERNAME" >> "$GITHUB_ENV"
+    notice "Normalized the RDP username to lowercase: $WFS_RDP_USERNAME."
+  fi
   validate
   umask 077
   mkdir -p "$config"

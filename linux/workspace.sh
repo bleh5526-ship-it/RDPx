@@ -74,7 +74,7 @@ PY
     hostname="${WFS_HOSTNAME_BASE}-${GITHUB_RUN_ID}"
   fi
   echo "WFS_HOSTNAME=$hostname" >> "$GITHUB_ENV"
-  notice "Runner hostname=$hostname, xrdp user=$WFS_RDP_USERNAME, web user=$WFS_WEB_USERNAME, remote=$WFS_REMOTE."
+  notice "🔐 [1/5] Configuration accepted: hostname=$hostname, RDP user=$WFS_RDP_USERNAME, web user=$WFS_WEB_USERNAME, mode=$WFS_REMOTE."
   notice "Using existing RDP_PASSWORD and VNC_PASSWORD GitHub secrets only."
 }
 
@@ -82,7 +82,7 @@ start() {
   validate
   [ -s "$password_file" ] || die "Password file missing."
   local image="lscr.io/linuxserver/webtop:$WFS_DISTRO-$WFS_DESKTOP"
-  notice "Pulling $image"
+  notice "🐧 [2/5] Downloading selected desktop image: $image"
   docker pull "$image"
   docker rm -f "$name" >/dev/null 2>&1 || true
   local -a rdp_args=()
@@ -110,7 +110,7 @@ start() {
     sleep 3
   done
   [ "$code" = 200 ] || { docker logs --tail 60 "$name" || true; die "Backend HTTP response: $code (expected 200)."; }
-  notice "Authenticated desktop backend passed HTTP 200 on localhost."
+  notice "✅ [2/5] Webtop desktop healthy: authenticated HTTPS 200 on localhost, private Docker ports only."
   echo "WFS_IMAGE=$image" >> "$GITHUB_ENV"
   echo "WFS_IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$image")" >> "$GITHUB_ENV"
 }
@@ -207,7 +207,7 @@ publish() {
     echo "WFS_RDP_ADDRESS=$rdp_address"
     echo "WFS_ACTIVE_TRANSPORT=$browser_transport"
   } >> "$GITHUB_ENV"
-  notice "Private RDP: ${rdp_address:-disabled}; private browser: ${browser_url:-disabled}."
+  notice "✅ [4/5] Private endpoints: RDP=${rdp_address:-disabled}; browser=${browser_url:-disabled}."
   notice "Forwarded ports bind to Tailscale 100.x only; no public listener or Funnel."
   [ -z "$browser_url" ] || echo "::notice title=Linux Web Remote::$browser_url"
   [ -z "$rdp_address" ] || echo "::notice title=Linux Native RDP::$rdp_address"
@@ -414,16 +414,57 @@ EOF
 
 keepalive() {
   validate
-  local deadline=$((SECONDS + WFS_DURATION * 3600))
-  notice "Keep Alive started ($WFS_DURATION hours requested; overall job max 360 minutes)."
+  local duration=$((WFS_DURATION * 3600))
+  local deadline=$((SECONDS + duration))
+  local active_web="${WFS_LINUX_URL:-not enabled}"
+  local active_rdp="${WFS_RDP_ADDRESS:-not enabled}"
+  local session_start
+  session_start=$(date -u '+%Y-%m-%d %H:%M UTC')
+  cat <<EOF
+
+╔════════════════════════════════════════════════════════════╗
+║           🐧 WFS LINUX REMOTE WORKSPACE — READY            ║
+╠════════════════════════════════════════════════════════════╣
+║  Hostname    : ${WFS_HOSTNAME:-not assigned}
+║  Tailscale IP: ${WFS_LINUX_IP:-not assigned}
+║  Linux       : $WFS_DISTRO / $WFS_DESKTOP
+║  Remote mode : $WFS_REMOTE
+║  RDP address : $active_rdp
+║  RDP user    : $WFS_RDP_USERNAME (Secret RDP_PASSWORD; $WFS_RDP_PASSWORD_MODE)
+║  Web URL     : $active_web
+║  Web user    : $WFS_WEB_USERNAME (Secret VNC_PASSWORD; $WFS_VNC_PASSWORD_MODE)
+║  Web protocol: ${WFS_ACTIVE_TRANSPORT:-none}
+║  Duration    : $WFS_DURATION hour(s) requested
+║  Start UTC   : $session_start
+╚════════════════════════════════════════════════════════════╝
+
+✅ Tailscale-only connections are ready to test from your device.
+🔐 Passwords are NEVER displayed in public Actions logs.
+🌐 Webtop browser auto-resizes; use F11 for full screen.
+🖥️ RDP (Xorg) and web (Selkies) are separate desktop sessions.
+⏳ The total Actions job limit is 360 minutes, including startup.
+📊 See the GitHub Actions Summary tab for URLs, applications and diagnostics.
+
+EOF
+  notice "Keep Alive running; close RDP/browser client to disconnect, but keep this Actions job active."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null || true)" = true ] || die "Desktop container stopped."
-    tailscale status --json >/dev/null || die "Tailscale is offline."
-    notice "Heartbeat: $WFS_DISTRO/$WFS_DESKTOP running at $(date -u '+%H:%M:%S UTC')."
-    sleep 60
+    if [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null || true)" != true ]; then
+      die "Desktop container stopped while session was active. See Docker logs."
+    fi
+    if ! tailscale status --json >/dev/null; then
+      die "Tailscale disconnected during remote session."
+    fi
+    local left=$((deadline - SECONDS))
+    local minutes=$(((left + 59) / 60))
+    notice "🟢 REMOTE READY | $(date -u '+%H:%M:%S UTC') | $minutes min remaining | container=running | tailnet=connected | $WFS_REMOTE"
+    local sleep_for=60
+    if [ "$left" -lt 60 ]; then sleep_for="$left"; fi
+    [ "$sleep_for" -gt 0 ] || break
+    sleep "$sleep_for"
   done
-  notice "Session duration completed."
+  notice "✅ Requested duration completed. Cleanup will stop the temporary remote desktop."
 }
+
 cleanup() {
   if [ -f "$state/forwarder-pids" ]; then
     while read -r pid; do

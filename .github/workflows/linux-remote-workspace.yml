@@ -219,6 +219,10 @@ jobs:
         timeout-minutes: 15
         run: bash linux/setup-rdp.sh
 
+      - name: "🌐 Install Google Chrome + mandatory Cookie-Editor and GoFullPage extensions"
+        timeout-minutes: 10
+        run: bash linux/install-chrome.sh
+
       - name: "🐾 Connect temporary runner to private Tailscale tailnet"
         uses: tailscale/github-action@v4
         with:

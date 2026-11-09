@@ -60,9 +60,9 @@ Simpan di [**Settings → Secrets and variables → Actions**](https://github.co
 
 | Input | Fungsi | Default |
 |:--|:--|:--|
-| `tailscale_hostname` | Nama dasar node Tailscale (huruf kecil, angka, strip) | `wfs-linux` |
+| `tailscale_hostname` | Nama node Tailscale yang bisa diisi sendiri (huruf kecil, angka, strip) | `rdp-runner` |
 | `hostname_mode` | `same_each_run` atau `unique_each_run` | `unique_each_run` |
-| `rdp_username` | Nama akun Linux yang login via RDP | `wfsrdp` |
+| `rdp_username` | Nama akun Linux yang login via RDP | `rdp` |
 | `web_username` | Nama akun login browser Webtop | `wfs` |
 | `rdp_password_mode` | `same_from_secret` atau `random_each_run` | `same_from_secret` |
 | `vnc_password_mode` | `same_from_secret` atau `random_each_run` | `same_from_secret` |
@@ -97,6 +97,26 @@ try {
 ```
 
 Angka `$RunId` adalah nomor dari URL Actions run Anda, **bukan** commit SHA atau nomor job. Gunakan jenis `rdp` untuk xrdp, `web` untuk akses browser. Jangan kirim hasil atau secret asal ke issue/log publik.
+
+## 📊 Dashboard Summary & log baru (seperti Windows)
+
+Workflow Linux menampilkan **Dashboard** pada tab **Summary** setiap run aktif dan banner **WFS LINUX REMOTE WORKSPACE — READY** pada langkah **Remote READY — Keep Alive**. Informasi tidak hanya berupa URL pendek, tetapi terbagi menjadi:
+
+| Bagian output | Apa yang ditampilkan |
+|:--|:--|
+| **🎯 Recommended Login** | Alamat RDP `100.x.x.x:3389`, username yang dipilih (default `rdp`), tautan browser HTTPS, username web (default `wfs`), dan petunjuk password |
+| **🔗 Connection & Runner Details** | Distro, desktop, image/digest, hostname Tailscale, IP, mode, transport diminta/aktif, port privat, durasi dan link run |
+| **🧪 Service Health** | Autentikasi Webtop HTTPS, status Tailscale, pemeriksaan xrdp, dan batas verifikasi dari sisi runner |
+| **📦 Selected Applications & Install Status** | Semua kategori aplikasi, hasil per-app jika ada, status langkah instalasi opsional, dan ArtCraft |
+| **🚀 How to Connect** | Langkah masuk melalui Microsoft Remote Desktop atau browser |
+| **🧯 Troubleshooting** | Solusi koneksi, sertifikat self-signed, username/password, dan aplikasi |
+| **🧹 Keep Alive & Cleanup** | Heartbeat kesehatan setiap menit, sisa waktu, batas maksimal GitHub Actions, serta pembersihan sesi |
+
+**Hostname default adalah `rdp-runner`**, dapat diganti langsung di kolom `tailscale_hostname` pada **Run workflow**. Mode `unique_each_run` (default) menambahkan Run ID, contohnya `rdp-runner-42500000000`; gunakan `same_each_run` bila ingin nama tanpa tambahan ID dan hindari dua node aktif bernama sama.
+
+**Username xrdp default kini `rdp`**, sedangkan username web tetap `wfs`. Keduanya dapat dikustomisasi terpisah. Mode password `same_from_secret` tetap menggunakan secret RDP/VNC yang sama dengan Windows; mode `random_each_run` mengikuti rumus HMAC pada panduan ini.
+
+**Keamanan:** log dan Summary tidak pernah menampilkan nilai `RDP_PASSWORD` atau `VNC_PASSWORD` (termasuk password per-run). Status READY membuktikan koneksi dan respons layanan **dari runner**, bukan keberhasilan login grafis dari perangkat lain. Setelah Anda melakukan uji langsung, gunakan URL yang berasal dari run baru yang masih aktif.
 
 ## 🚀 Langkah penggunaan
 

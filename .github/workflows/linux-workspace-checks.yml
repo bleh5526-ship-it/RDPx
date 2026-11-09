@@ -69,7 +69,8 @@ jobs:
               "SELKIES_ENABLE_RESIZE=true",
               "127.0.0.1:13389:3389",
               "hmac.new(",
-              "tailscale serve --bg --yes --tcp=6082",
+              "start_tailnet_forwarder",
+              "TCP-LISTEN:$public_port,bind=$ip",
           ):
               assert required in runtime, required
           assert "tailscale funnel" not in runtime.lower()
@@ -170,5 +171,71 @@ jobs:
           echo 'PASS: RDP handshake, authenticated web login and localhost-only mappings.'
 
       - name: "🧹 Always remove both-mode test desktop"
+        if: always()
+        run: bash linux/workspace.sh cleanup
+
+  smoke-tailnet-both:
+    name: "Real Tailscale: browser and xrdp, without Serve permission"
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      WFS_DISTRO: debian
+      WFS_DESKTOP: xfce
+      WFS_DURATION: "1"
+      WFS_TRANSPORT: auto
+      WFS_APPS: none
+      WFS_REMOTE: both
+      WFS_HOSTNAME_BASE: wfs-ci-tailnet
+      WFS_HOSTNAME_MODE: unique_each_run
+      WFS_RDP_USERNAME: wfsrdp
+      WFS_WEB_USERNAME: webci
+      WFS_RDP_PASSWORD_MODE: random_each_run
+      WFS_VNC_PASSWORD_MODE: same_from_secret
+    steps:
+      - name: "📦 Checkout"
+        uses: actions/checkout@v7.0.1
+      - name: "🔐 Prepare dummy test-only credentials"
+        env:
+          WFS_RDP_PASSWORD: "CI-RDP-ONLY-NOT-PRODUCTION-2026"
+          WFS_VNC_PASSWORD: "CI-WEB-ONLY-NOT-PRODUCTION-2026"
+        run: bash linux/workspace.sh prepare
+      - name: "🖥️ Start Debian Xfce and native xrdp"
+        timeout-minutes: 12
+        run: |
+          bash linux/workspace.sh start
+          bash linux/setup-rdp.sh
+      - name: "🐾 Join private Tailscale tailnet"
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          hostname: ${{ env.WFS_HOSTNAME }}
+          version: latest
+      - name: "🌐 Publish private Tailscale web and RDP endpoints"
+        timeout-minutes: 3
+        run: bash linux/workspace.sh publish
+      - name: "🔬 Verify TLS, RDP and cross-step listener survival"
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          test -n "$WFS_LINUX_IP"
+          test -n "$WFS_LINUX_URL"
+          test -n "$WFS_RDP_ADDRESS"
+          echo "$WFS_LINUX_URL" | grep -Eq '^https://100\.[0-9]+\.[0-9]+\.[0-9]+:6082/'
+          echo "$WFS_RDP_ADDRESS" | grep -Eq '^100\.[0-9]+\.[0-9]+\.[0-9]+:3389$'
+          curl --silent --show-error --insecure --fail --max-time 15 \
+            --user "webci:$(cat "$RUNNER_TEMP/wfs-linux/web-password")" "$WFS_LINUX_URL" >/dev/null
+          python3 - <<'PY'
+          import os, socket
+          addr = os.environ["WFS_LINUX_IP"]
+          for port in (6082, 3389):
+              with socket.create_connection((addr, port), timeout=5):
+                  print(f"PASS: private Tailscale {addr}:{port} reachable from independent step")
+          PY
+          ss -ltn | grep -F "$WFS_LINUX_IP:6082"
+          ss -ltn | grep -F "$WFS_LINUX_IP:3389"
+          echo 'PASS: Tailscale, browser TLS and xrdp, listeners persist between steps.'
+      - name: "🧹 Always cleanup"
         if: always()
         run: bash linux/workspace.sh cleanup

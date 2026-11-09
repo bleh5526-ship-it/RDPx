@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Independently attempt user-selected Linux apps; keep a working desktop alive.
-set -u
+set -uo pipefail
+failed_count=0
 distro="$WFS_DISTRO"
 status_file="$RUNNER_TEMP/wfs-linux/apps-status.tsv"
 mkdir -p "$(dirname "$status_file")"
 : > "$status_file"
 say() { printf '[WFS Linux Apps] %s\n' "$*"; }
-record() { printf '%s\t%s\n' "$1" "$2" >> "$status_file"; say "$1: $2"; }
+record() { printf '%s\t%s\n' "$1" "$2" >> "$status_file"; say "$1: $2"; case "$2" in FAILED*) failed_count=$((failed_count+1));; esac; }
 pkg() {
   case "$distro" in
     debian|ubuntu) docker exec -u 0 wfs-linux-webtop /bin/sh -c "DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $*" ;;
@@ -17,9 +18,14 @@ pkg() {
   esac
 }
 install_pkg() {
-  local title="$1" packages="$2"
-  if pkg "$packages"; then record "$title" "INSTALLED (distro package manager)"
-  else record "$title" "FAILED (package/dependency issue)"; fi
+  local title="$1" packages="$2" executable="$3"
+  if docker exec -u 0 wfs-linux-webtop /bin/sh -c "command -v $executable >/dev/null"; then
+    record "$title" "INSTALLED (already available and verified: $executable)"
+  elif pkg "$packages" && docker exec -u 0 wfs-linux-webtop /bin/sh -c "command -v $executable >/dev/null"; then
+    record "$title" "INSTALLED (package manager; verified: $executable)"
+  else
+    record "$title" "FAILED (package/dependency issue or missing binary: $executable)"
+  fi
 }
 install_vscode() {
   if [ "$distro" = debian ] || [ "$distro" = ubuntu ]; then
@@ -75,19 +81,29 @@ install_npm() {
 }
 case "$WFS_APPS" in
   developer|all)
-    case "$distro" in arch) p="git curl wget python python-pip nodejs npm vim";; alpine) p="git curl wget python3 py3-pip nodejs npm vim";; *) p="git curl wget python3 python3-pip nodejs npm vim";; esac
-    install_pkg "Developer bundle" "$p" ;;
+    install_pkg "Git" "git" "git"
+    install_pkg "curl" "curl" "curl"
+    install_pkg "wget" "wget" "wget"
+    case "$distro" in
+      arch) install_pkg "Python" "python python-pip" "python" ;;
+      alpine) install_pkg "Python" "python3 py3-pip" "python3" ;;
+      *) install_pkg "Python" "python3 python3-pip" "python3" ;;
+    esac
+    install_pkg "Vim" "vim" "vim"
+    if ensure_node; then record "Node.js + npm" "INSTALLED (Node 20+ and npm verified)"
+    else record "Node.js + npm" "FAILED (NodeSource package or npm binary unavailable)"; fi
+    ;;
 esac
 case "$WFS_APPS" in office|all)
   case "$distro" in arch) p="libreoffice-fresh";; *) p="libreoffice";; esac
-  install_pkg "Office bundle" "$p" ;;
+  install_pkg "LibreOffice" "$p" "libreoffice" ;;
 esac
-case "$WFS_APPS" in media|all) install_pkg "Media bundle" "gimp vlc" ;; esac
+case "$WFS_APPS" in media|all) install_pkg "GIMP" "gimp" "gimp"; install_pkg "VLC" "vlc" "vlc" ;; esac
 case "$WFS_IDE" in vscode|both) install_vscode ;; esac
 case "$WFS_IDE" in antigravity|both)
   record "Google Antigravity IDE" "MANUAL (official Linux GUI download; unattended package not verified)" ;;
 esac
-case "$WFS_EDITOR" in shotcut|both) install_pkg "Shotcut" "shotcut" ;; esac
+case "$WFS_EDITOR" in shotcut|both) install_pkg "Shotcut" "shotcut" "shotcut" ;; esac
 case "$WFS_EDITOR" in capcut|both)
   record "CapCut" "UNSUPPORTED as native Linux executable (Windows installer)" ;;
 esac
@@ -110,5 +126,6 @@ esac
 case "$WFS_AI_AGENT" in opencode|all)
   install_npm "OpenCode" "opencode-ai" "opencode" ;;
 esac
-say "All selections accounted for. App-status table is included in Actions Summary."
+say "Selected applications processed. Failed installs: $failed_count. Desktop remains accessible."
+[ "$failed_count" -eq 0 ] || exit 1
 exit 0

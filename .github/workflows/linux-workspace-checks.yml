@@ -47,6 +47,7 @@ jobs:
           assert inputs["transport"]["default"] == "auto"
           assert inputs["remote_access"]["options"] == ["rdp", "novnc", "both"]
           assert inputs["hostname_mode"]["options"] == ["same_each_run", "unique_each_run"]
+          assert inputs["hostname_mode"]["default"] == "same_each_run"
           assert inputs["rdp_password_mode"]["options"] == ["same_from_secret", "random_each_run"]
           assert inputs["vnc_password_mode"]["options"] == ["same_from_secret", "random_each_run"]
           assert inputs["rdp_username"]["default"] == "rdp"
@@ -103,7 +104,7 @@ jobs:
       WFS_APPS: none
       WFS_REMOTE: novnc
       WFS_HOSTNAME_BASE: rdp-runner
-      WFS_HOSTNAME_MODE: unique_each_run
+      WFS_HOSTNAME_MODE: same_each_run
       WFS_RDP_USERNAME: rdp
       WFS_WEB_USERNAME: wfs
       WFS_RDP_PASSWORD_MODE: same_from_secret
@@ -115,7 +116,10 @@ jobs:
       - name: "🔐 Prepare dummy smoke-test-only authentication"
         env:
           WFS_VNC_PASSWORD: "CI-ONLY-LOCAL-TEST-PASSWORD-2026"
-        run: bash linux/workspace.sh prepare
+        run: |
+          bash linux/workspace.sh prepare
+          grep -Fx "WFS_HOSTNAME=rdp-runner" "$GITHUB_ENV"
+          echo "PASS: same_each_run retains hostname rdp-runner without Run ID."
 
       - name: "🖥️ Launch actual Debian Xfce Webtop and test authenticated HTTPS"
         timeout-minutes: 15

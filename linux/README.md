@@ -61,7 +61,7 @@ Simpan di [**Settings → Secrets and variables → Actions**](https://github.co
 | Input | Fungsi | Default |
 |:--|:--|:--|
 | `tailscale_hostname` | Nama node Tailscale yang bisa diisi sendiri (huruf kecil, angka, strip) | `rdp-runner` |
-| `hostname_mode` | `same_each_run` atau `unique_each_run` | `unique_each_run` |
+| `hostname_mode` | `same_each_run` atau `unique_each_run` | `same_each_run` |
 | `rdp_username` | Nama akun Linux yang login via RDP | `rdp` |
 | `web_username` | Nama akun login browser Webtop | `wfs` |
 | `rdp_password_mode` | `same_from_secret` atau `random_each_run` | `same_from_secret` |
@@ -112,7 +112,7 @@ Workflow Linux menampilkan **Dashboard** pada tab **Summary** setiap run aktif d
 | **🧯 Troubleshooting** | Solusi koneksi, sertifikat self-signed, username/password, dan aplikasi |
 | **🧹 Keep Alive & Cleanup** | Heartbeat kesehatan setiap menit, sisa waktu, batas maksimal GitHub Actions, serta pembersihan sesi |
 
-**Hostname default adalah `rdp-runner`**, dapat diganti langsung di kolom `tailscale_hostname` pada **Run workflow**. Mode `unique_each_run` (default) menambahkan Run ID, contohnya `rdp-runner-42500000000`; gunakan `same_each_run` bila ingin nama tanpa tambahan ID dan hindari dua node aktif bernama sama.
+**Hostname default adalah `rdp-runner`**, dapat diganti langsung di kolom `tailscale_hostname` pada **Run workflow**. Mode default **`same_each_run`** menggunakan hostname yang sama pada setiap run, tanpa Run ID. Jika perlu menghindari bentrok antar-run yang aktif bersamaan, pilih `unique_each_run` untuk menambahkan Run ID, contohnya `rdp-runner-42500000000`. Jangan menjalankan dua runner aktif dengan hostname yang sama; Tailscale dapat memberi sufiks berbeda bila masih ada node yang menggunakan nama tersebut.
 
 **Username xrdp default kini `rdp`**, sedangkan username web tetap `wfs`. Keduanya dapat dikustomisasi terpisah. Mode password `same_from_secret` tetap menggunakan secret RDP/VNC yang sama dengan Windows; mode `random_each_run` mengikuti rumus HMAC pada panduan ini.
 

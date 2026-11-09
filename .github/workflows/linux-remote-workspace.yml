@@ -102,10 +102,10 @@ on:
         required: true
         default: "rdp-runner"
       hostname_mode:
-        description: "Mode hostname runner tetap atau unik per run"
+        description: "Mode hostname: sama pada setiap run (default) atau unik per run"
         required: true
         type: choice
-        default: "unique_each_run"
+        default: "same_each_run"
         options:
           - "same_each_run"
           - "unique_each_run"

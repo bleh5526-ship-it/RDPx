@@ -29,7 +29,7 @@ with tarfile.open(path, "r:gz") as tar:
 print(f"[WFS Antigravity] Archive verified and contains {len(members)} entries.")
 PY
 docker cp "$dir/antigravity-ide.tar.gz" wfs-linux-webtop:/tmp/wfs-antigravity-ide.tar.gz
-docker exec -u 0 wfs-linux-webtop /bin/sh -s <<'IN_CONTAINER'
+docker exec -i -u 0 wfs-linux-webtop /bin/sh -s <<'IN_CONTAINER'
 set -eu
 root=/opt/wfs-antigravity-ide
 mkdir -p "$root"

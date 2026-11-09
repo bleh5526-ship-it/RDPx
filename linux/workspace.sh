@@ -133,7 +133,8 @@ probe() {
 # Bind the fallback to the Tailscale 100.x interface only.
 # Tailscale Serve is optional; the tailnet itself remains required.
 start_tailnet_forwarder() {
-  local ip="$1" public_port="$2" local_port="$3" logfile="$state/forward-$public_port.log"
+  local ip="$1" public_port="$2" local_port="$3"
+  local logfile="$state/forward-$public_port.log"
   if ! command -v socat >/dev/null 2>&1; then
     notice "Installing socat for private tailnet port forwarding."
     timeout 95s sudo -n apt-get install -y -qq --no-install-recommends socat >/dev/null ||

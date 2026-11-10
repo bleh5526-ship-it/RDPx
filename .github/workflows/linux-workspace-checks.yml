@@ -153,10 +153,10 @@ jobs:
         run: bash linux/workspace.sh cleanup
 
   smoke-debian-both:
-    name: "Smoke Debian native xrdp plus browser in one container"
+    name: "Smoke Debian native xrdp plus real Xfce GUI login"
     needs: validate
     runs-on: ubuntu-24.04
-    timeout-minutes: 22
+    timeout-minutes: 28
     env:
       WFS_DISTRO: debian
       WFS_DESKTOP: xfce
@@ -198,6 +198,10 @@ jobs:
           docker port wfs-linux-webtop 3389 | grep -F '127.0.0.1:13389'
           docker port wfs-linux-webtop 3001 | grep -F '127.0.0.1:13001'
           echo 'PASS: RDP handshake, authenticated web login and localhost-only mappings.'
+
+      - name: "🖥️ Real FreeRDP GUI login and nonblack Xfce session check"
+        timeout-minutes: 7
+        run: bash linux/test-rdp-gui.sh
 
       - name: "🧹 Always remove both-mode test desktop"
         if: always()

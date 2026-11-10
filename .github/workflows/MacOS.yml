@@ -571,6 +571,16 @@ jobs:
           while (( SECONDS < end )); do
             tick=$((tick + 1))
             ts="$(date '+%H:%M:%S')"
+            TS_JSON="$(tailscale status --json 2>/dev/null || true)"
+            TS_STATE="$(printf '%s' "$TS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("BackendState","unknown"))' 2>/dev/null || echo unknown)"
+            TS_IP_NOW="$(tailscale ip -4 2>/dev/null | head -n1 || true)"
+
+            if [[ "$TS_STATE" == "Running" && -n "$TS_IP_NOW" ]]; then
+              echo "🌐 [$ts] Tailscale online | $TS_IP_NOW"
+            else
+              echo "⚠️ [$ts] Tailscale mungkin offline | state=$TS_STATE"
+            fi
+
 
             if ! nc -z 127.0.0.1 5900 2>/dev/null; then
               echo "⚠️ [$ts] VNC 5900 down. Restarting Screen Sharing..."

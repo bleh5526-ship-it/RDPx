@@ -1,4 +1,4 @@
-name: "🖥️ macOS Remote noVNC via Tailscale"
+name: "🖥️ macOS Direct VNC via Tailscale"
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ on:
           - macos-14
           - macos-latest
       keepalive_minutes:
-        description: "How long to keep noVNC alive. GitHub-hosted runners max about 6 hours."
+        description: "How long to keep direct VNC alive. GitHub-hosted runners max about 6 hours."
         required: true
         default: "330"
         type: string
@@ -24,7 +24,7 @@ on:
         type: string
 
 concurrency:
-  group: macos-novnc-${{ github.ref }}
+  group: macos-direct-vnc-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -32,24 +32,18 @@ permissions:
   id-token: write
 
 jobs:
-  macos-novnc:
-    name: "macOS noVNC"
+  macos-direct-vnc:
+    name: "macOS Direct VNC"
     runs-on: ${{ inputs.runner_label }}
     timeout-minutes: 355
 
     env:
-      NOVNC_VERSION: v1.5.0
-      NOVNC_DIR: /opt/novnc
-      WEBSOCKIFY_VENV: /tmp/novnc-venv
-      WEBSOCKIFY_PID: /tmp/websockify.pid
-      WEBSOCKIFY_LOG: /tmp/websockify.log
       TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
       TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
       TAILSCALE_OAUTH_CLIENT_ID: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
       TAILSCALE_OAUTH_SECRET: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
       TAILSCALE_AUDIENCE: ${{ secrets.TAILSCALE_AUDIENCE }}
       TAILSCALE_TAGS: ${{ inputs.tailscale_tags }}
-      REMOTE_PASSWORD: ${{ secrets.RDP_PASSWORD }}
       VNC_PASSWORD: ${{ secrets.VNC_PASSWORD }}
 
     steps:
@@ -58,10 +52,6 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          if [[ -z "$REMOTE_PASSWORD" ]]; then
-            echo "Missing RDP_PASSWORD secret"
-            exit 1
-          fi
           if [[ ${#VNC_PASSWORD} -ne 8 ]]; then
             echo "VNC_PASSWORD must be exactly 8 characters"
             exit 1
@@ -94,9 +84,7 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          # Blank black noVNC usually happens when VNC is attached to a user
-          # that has no active macOS GUI session. Use the active console user
-          # of the GitHub macOS runner instead of creating a new remoteadmin user.
+          # Use the active console user for the macOS desktop session.
           CONSOLE_USER="$(stat -f %Su /dev/console 2>/dev/null || true)"
           if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" || "$CONSOLE_USER" == "loginwindow" ]]; then
             echo "❌ Could not resolve the active console user"
@@ -185,10 +173,6 @@ jobs:
           KICKSTART="/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart"
           [[ -x "$KICKSTART" ]] || die "kickstart tool not found: $KICKSTART"
 
-          step "Set password for active GUI user: $REMOTE_USER"
-          sudo sysadminctl -resetPasswordFor "$REMOTE_USER" -newPassword "$REMOTE_PASSWORD" 2>/tmp/pass-reset.log \
-            && ok "Password active user direset" \
-            || { warn "sysadminctl reset failed; trying dscl fallback"; sudo dscl . -passwd "/Users/$REMOTE_USER" "$REMOTE_PASSWORD" 2>/dev/null || cat /tmp/pass-reset.log || true; }
           sudo dseditgroup -o edit -a "$REMOTE_USER" -t user admin 2>/dev/null || true
           ok "Active GUI user dipastikan berada di grup admin"
 
@@ -269,8 +253,8 @@ jobs:
           # Create a visible marker on Desktop so black-screen diagnosis is easier.
           DESKTOP="/Users/$REMOTE_USER/Desktop"
           mkdir -p "$DESKTOP" 2>/dev/null || true
-          cat > "$DESKTOP/NO_VNC_READY.txt" <<TXT
-          noVNC is connected to active user: $REMOTE_USER
+          cat > "$DESKTOP/DIRECT_VNC_READY.txt" <<TXT
+          Direct VNC is connected to active user: $REMOTE_USER
           If you can read this file, the remote desktop is working.
           TXT
           sudo chown "$REMOTE_USER":staff "$DESKTOP/NO_VNC_READY.txt" 2>/dev/null || true
@@ -288,31 +272,17 @@ jobs:
             warn "screencapture failed; VNC may still run but desktop may be headless"
           fi
 
-      - name: "📦 Install noVNC + websockify + VNC test dependencies"
+      - name: "📦 Install VNC authentication test dependency"
         shell: bash
         run: |
           set -Eeuo pipefail
-          ok() { printf '  ✅ %s\n' "$*"; }
-          step() { printf '\n▶ %s\n' "$*"; }
+          python3 -m venv /tmp/vnc-test-venv
+          /tmp/vnc-test-venv/bin/python -m pip install --upgrade pip -q
+          /tmp/vnc-test-venv/bin/python -m pip install pycryptodome -q
+          echo "VNC_TEST_PY=/tmp/vnc-test-venv/bin/python" >> "$GITHUB_ENV"
+          echo "✅ VNC authentication test dependency installed"
 
-          step "Create Python virtual environment"
-          rm -rf "$WEBSOCKIFY_VENV"
-          python3 -m venv "$WEBSOCKIFY_VENV"
-          "$WEBSOCKIFY_VENV/bin/python" -m pip install --upgrade pip setuptools wheel -q
-          "$WEBSOCKIFY_VENV/bin/python" -m pip install websockify pycryptodome -q
-          echo "WEBSOCKIFY_PY=$WEBSOCKIFY_VENV/bin/python" >> "$GITHUB_ENV"
-          ok "websockify + pycryptodome installed inside venv"
-
-          step "Install noVNC ${NOVNC_VERSION}"
-          curl -fsSL "https://github.com/novnc/noVNC/archive/refs/tags/${NOVNC_VERSION}.tar.gz" -o /tmp/novnc.tar.gz
-          sudo rm -rf "$NOVNC_DIR"
-          sudo mkdir -p "$NOVNC_DIR"
-          sudo tar xzf /tmp/novnc.tar.gz -C "$NOVNC_DIR" --strip-components=1
-          rm -f /tmp/novnc.tar.gz
-          sudo ln -sf "$NOVNC_DIR/vnc.html" "$NOVNC_DIR/index.html"
-          ok "noVNC installed: $NOVNC_DIR"
-
-      - name: "🧪 Test VNC password before showing URL"
+      - name: "🧪 Test direct VNC authentication"
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -382,7 +352,7 @@ jobs:
           PY
 
           step "Run VNC auth self-test"
-          if "$WEBSOCKIFY_PY" /tmp/vnc_auth_check.py; then
+          if "$VNC_TEST_PY" /tmp/vnc_auth_check.py; then
             ok "VNC password verified against 127.0.0.1:5900"
           else
             warn "First auth test failed. Re-applying ARD VNC password once..."
@@ -397,60 +367,10 @@ jobs:
               -restart -agent -menu 2>/tmp/kickstart-retry.log || true
             sudo launchctl kickstart -k system/com.apple.screensharing 2>/dev/null || true
             sleep 5
-            "$WEBSOCKIFY_PY" /tmp/vnc_auth_check.py \
+            "$VNC_TEST_PY" /tmp/vnc_auth_check.py \
               && ok "VNC password verified after retry" \
               || { cat /tmp/kickstart-retry.log || true; die "VNC auth tetap gagal. URL tidak akan ditampilkan karena credential belum valid."; }
           fi
-
-      - name: "🔒 Generate self-signed TLS certificate"
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout /tmp/novnc.key \
-            -out /tmp/novnc.crt \
-            -subj "/C=ID/ST=Jakarta/L=Jakarta/O=Runner/CN=localhost" \
-            2>/dev/null
-          echo "✅ Self-signed TLS certificate dibuat"
-
-      - name: "🌐 Start websockify noVNC server"
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          ok() { printf '  ✅ %s\n' "$*"; }
-          die() { printf '  ❌ %s\n' "$*"; exit 1; }
-
-          if [[ -f "$WEBSOCKIFY_PID" ]]; then
-            oldpid="$(cat "$WEBSOCKIFY_PID" 2>/dev/null || true)"
-            if [[ -n "$oldpid" ]] && kill -0 "$oldpid" 2>/dev/null; then
-              kill "$oldpid" 2>/dev/null || true
-              sleep 1
-            fi
-          fi
-
-          : > "$WEBSOCKIFY_LOG"
-          nohup "$WEBSOCKIFY_PY" -m websockify \
-            --web="$NOVNC_DIR" \
-            --cert=/tmp/novnc.crt \
-            --key=/tmp/novnc.key \
-            --ssl-only \
-            --heartbeat=30 \
-            0.0.0.0:6080 127.0.0.1:5900 \
-            > "$WEBSOCKIFY_LOG" 2>&1 &
-          echo "$!" > "$WEBSOCKIFY_PID"
-          sleep 4
-
-          if nc -z 127.0.0.1 6080 2>/dev/null; then
-            ok "websockify aktif di port 6080"
-          else
-            cat "$WEBSOCKIFY_LOG" || true
-            die "websockify gagal start"
-          fi
-
-          curl -kfsS --max-time 10 https://127.0.0.1:6080/ >/tmp/novnc-index.html \
-            && ok "noVNC HTTPS index dapat diakses lokal" \
-            || { cat "$WEBSOCKIFY_LOG" || true; die "noVNC HTTPS index gagal diakses"; }
 
       - name: "🔗 Connect Tailscale using TAILSCALE_AUTHKEY"
         if: ${{ env.TAILSCALE_AUTHKEY != '' }}
@@ -505,105 +425,77 @@ jobs:
           echo "TAILSCALE_IP=$TS_IP" >> "$GITHUB_ENV"
           ok "Tailscale IP: $TS_IP"
 
-      - name: "📋 Access info and keep alive"
+          if ! nc -z -w 5 127.0.0.1 5900; then
+            die "Local VNC port 5900 is not listening"
+          fi
+
+          if ! nc -z -w 5 "$TS_IP" 5900; then
+            sudo lsof -nP -iTCP:5900 -sTCP:LISTEN 2>/dev/null || true
+            die "VNC port 5900 is not reachable through Tailscale IP"
+          fi
+          ok "VNC reachable through Tailscale on TCP 5900"
+
+      - name: "📋 Direct VNC access and keep alive"
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          restart_websockify() {
-            if [[ -f "$WEBSOCKIFY_PID" ]]; then
-              pid="$(cat "$WEBSOCKIFY_PID" 2>/dev/null || true)"
-              if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-                kill "$pid" 2>/dev/null || true
-                sleep 1
-              fi
-            fi
-            : > "$WEBSOCKIFY_LOG"
-            nohup "$WEBSOCKIFY_PY" -m websockify \
-              --web="$NOVNC_DIR" \
-              --cert=/tmp/novnc.crt \
-              --key=/tmp/novnc.key \
-              --ssl-only \
-              --heartbeat=30 \
-              0.0.0.0:6080 127.0.0.1:5900 \
-              > "$WEBSOCKIFY_LOG" 2>&1 &
-            echo "$!" > "$WEBSOCKIFY_PID"
-          }
-
-          BASE_URL="https://${TAILSCALE_IP}:6080"
-          URL="${BASE_URL}/vnc.html?autoconnect=true&reconnect=true&resize=scale&path=websockify"
-
           cat <<EOF_SUMMARY >> "$GITHUB_STEP_SUMMARY"
-          # macOS noVNC Ready
-
-          ## Recommended URL
-          $URL
-
-          ## Login
-          The workflow now connects VNC to the active GUI user to prevent black-screen sessions.
+          # macOS Direct VNC Ready
 
           | Field | Value |
           |---|---|
-          | noVNC URL | $URL |
-          | noVNC username, only if asked | $REMOTE_USER |
-          | macOS username | $REMOTE_USER |
+          | Tailscale IP | $TAILSCALE_IP |
+          | VNC port | 5900 |
+          | VNC password | GitHub secret VNC_PASSWORD |
+          | macOS user | $REMOTE_USER |
 
-          ## If browser still shows a black page
-          1. Press the noVNC side tab on the left.
-          2. Disconnect, then reconnect.
-          3. Use resize mode: scale, not remote resize.
-          4. Refresh the recommended URL above.
+          Connect using AVNC with the Tailscale IP and port 5900.
           EOF_SUMMARY
 
-          echo
           echo "============================================================"
-          echo "macOS noVNC Ready"
-          echo "Recommended URL      : $URL"
-          echo "Fallback URL         : ${BASE_URL}/vnc.html"
-          echo "noVNC username       : $REMOTE_USER   (only if asked)"
-          echo "macOS username       : $REMOTE_USER"
-          echo "IMPORTANT            : Uses active GUI user to avoid black screen."
+          echo "macOS Direct VNC Ready"
+          echo "Tailscale IP : $TAILSCALE_IP"
+          echo "VNC port     : 5900"
+          echo "VNC password : GitHub secret VNC_PASSWORD (hidden)"
+          echo "macOS user   : $REMOTE_USER"
+          echo "Client       : AVNC / VNC Viewer"
           echo "============================================================"
-          echo
 
           end=$((SECONDS + KEEPALIVE_MINUTES * 60))
           tick=0
+
           while (( SECONDS < end )); do
             tick=$((tick + 1))
             ts="$(date '+%H:%M:%S')"
-            # Bounded Tailscale diagnostics
+
             TS_JSON="$(python3 -c 'import subprocess; print(subprocess.run(["tailscale","status","--json"],capture_output=True,text=True,timeout=8,check=True).stdout)' 2>/dev/null || true)"
             TS_STATE="$(printf '%s' "$TS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("BackendState","unknown"))' 2>/dev/null || echo unknown)"
             TS_IP_NOW="$(python3 -c 'import subprocess; p=subprocess.run(["tailscale","ip","-4"],capture_output=True,text=True,timeout=8,check=True); print(p.stdout.strip().splitlines()[0] if p.stdout.strip() else "")' 2>/dev/null || true)"
             TS_DAEMON="$(pgrep -x tailscaled >/dev/null 2>&1 && echo yes || echo no)"
 
-            echo "🩺 [$ts] Tailscale diagnostic | state=$TS_STATE | ip=${TS_IP_NOW:-none} | tailscaled=$TS_DAEMON"
+            echo "🩺 [$ts] Tailscale | state=$TS_STATE | ip=\${TS_IP_NOW:-none} | tailscaled=$TS_DAEMON"
 
             if [[ "$TS_STATE" == "Running" && -n "$TS_IP_NOW" ]]; then
               echo "🌐 [$ts] Tailscale online | $TS_IP_NOW"
             else
-              echo "⚠️ [$ts] Tailscale offline atau daemon tidak merespons"
+              echo "⚠️ [$ts] Tailscale offline or daemon not responding"
             fi
 
-
-            if ! nc -z 127.0.0.1 5900 2>/dev/null; then
-              echo "⚠️ [$ts] VNC 5900 down. Restarting Screen Sharing..."
+            if nc -z -w 5 127.0.0.1 5900 2>/dev/null; then
+              echo "✅ [$ts] Local VNC port 5900 online"
+            else
+              echo "⚠️ [$ts] VNC down; restarting Screen Sharing"
               sudo launchctl kickstart -k system/com.apple.screensharing 2>/dev/null || true
-              sleep 4
-            fi
-
-            if ! nc -z 127.0.0.1 6080 2>/dev/null; then
-              echo "⚠️ [$ts] websockify 6080 down. Restarting..."
-              restart_websockify
-              sleep 4
+              sleep 5
             fi
 
             if (( tick % 3 == 0 )); then
               sudo launchctl asuser "$GUI_UID" sudo -u "$REMOTE_USER" open -a Finder 2>/dev/null || true
             fi
 
-            echo "✅ [$ts] alive #$tick | $URL"
+            echo "✅ [$ts] alive #$tick | VNC $TAILSCALE_IP:5900"
             sleep 300
           done
 
-          echo "Keep-alive finished after ${KEEPALIVE_MINUTES} minutes."
+          echo "Keep-alive finished after \${KEEPALIVE_MINUTES} minutes."

@@ -31,7 +31,7 @@ Workflow Linux berjalan **terpisah** dari Windows, tetap memakai Tailscale, GitH
 | Password browser | Secret `VNC_PASSWORD` | **Secret yang sama** |
 | Password mode | Secret tetap / acak per run | Secret tetap / acak per run, **tidak dicetak di log publik** |
 | Nama runner | Hostname + mode tetap/unik | Hostname + mode tetap/unik |
-| Nama akun RDP | RDP | Dapat diubah (default `rdp`) |
+| Nama akun RDP | `RDP` | Dapat diubah (default **`RDP`**, huruf besar) |
 | Nama login browser | Password VNC | Dapat diubah (default `wfs`) |
 | Durasi | 1 / 3 / 6 jam | 1 / 3 / 6 jam; job maksimal 360 menit |
 | Aplikasi | IDE, editor, MetaTrader, router, agent, ArtCraft | **Menu kategori sama**; instalasi hanya bila kompatibel |
@@ -39,6 +39,8 @@ Workflow Linux berjalan **terpisah** dari Windows, tetap memakai Tailscale, GitH
 **Aplikasi Linux:** pilihan VS Code/Antigravity, CapCut/Shotcut, MT4/MT5, 9Router/OmniRoute, Codex/Claude, Hermes/OpenClaw/OpenCode, ArtCraft, serta paket Developer/Office/Media. Installer mengeluarkan status **INSTALLED**, **FAILED**, **MANUAL**, atau **UNSUPPORTED** per aplikasi. CapCut native Linux dan MetaTrader native bukan instalasi Linux resmi yang dapat dianggap berhasil otomatis; lihat Summary.
 
 **Perhatian:** mode noVNC pada Linux adalah **Selkies Webtop**, bukan server VNC klasik. RDP menggunakan sesi Xorg/Xfce terpisah, sehingga **RDP dan browser tidak otomatis menampilkan satu layar yang sama**. Arch Linux xrdp tidak tersedia dari repositori resmi yang dipakai script; gunakan `novnc` di Arch. Fitur xrdp distro lain masih memerlukan pengujian runtime.
+
+**Perbaikan xrdp + ekstensi Chrome (10 November 2026):** akun RDP Linux sekarang menggunakan **`RDP` kapital**, sama dengan Windows, tanpa normalisasi ke huruf kecil. Installer memasang komponen desktop Xfce lengkap (`xfwm4`, `xfdesktop`, panel, DBus) dan launcher sesi khusus untuk mengatasi layar hitam setelah login; CI juga menguji login grafis dengan FreeRDP. **Google Chrome wajib** dipasang beserta kebijakan pemasangan otomatis **Cookie-Editor** dan **GoFullPage**, sama dengan workflow Windows (Chromium dipakai pada distro tanpa Chrome resmi). Unduhan ekstensi berjalan ketika Chrome pertama kali dibuka; periksa `chrome://policy` dan `chrome://extensions`. [Panduan dan status tes Linux](linux/README.md).
 
 **Output Linux kini setara dengan Windows:** Actions **Summary** menampilkan dashboard lengkap untuk **RDP/browser URL, username, password mode (tanpa membocorkan isi secret), hostname/IP Tailscale, health checks, distro/desktop, status setiap aplikasi, durasi, dan troubleshooting**. Langkah **Remote READY** juga menampilkan banner koneksi dan heartbeat kesehatan setiap menit. **Hostname** dapat diketik pada `tailscale_hostname` dengan default **`rdp-runner`** (mode default `same_each_run` mempertahankan nama yang sama pada setiap run). **Username RDP** default adalah **`rdp`**, sementara username browser tetap **`wfs`** dan dapat diubah.
 
@@ -52,7 +54,7 @@ Workflow Linux berjalan **terpisah** dari Windows, tetap memakai Tailscale, GitH
 |:--|:--|:--|
 | Run workflow | [Windows Actions](https://github.com/wawanwfs/RDP/actions/workflows/windows-remote-workspace-with-apps.yml) | [Linux Actions](https://github.com/wawanwfs/RDP/actions/workflows/linux-remote-workspace.yml) |
 | Remote | `rdp`, `novnc`, `both` | `rdp`, `novnc` (web Selkies), `both` |
-| Username | `RDP` untuk remote Windows | `rdp_username` (default `rdp`) / `web_username` (default `wfs`) |
+| Username | `RDP` untuk remote Windows | `rdp_username` (default **`RDP`**) / `web_username` (default `wfs`) |
 | Hostname | `tailscale_hostname`, mode tetap/unik | `tailscale_hostname`, mode tetap/unik |
 | Password | `RDP_PASSWORD` dan `VNC_PASSWORD` | **Secret yang sama**, mode tetap/acak per run |
 | Durasi | 1/3/6 jam | 1/3/6 jam |

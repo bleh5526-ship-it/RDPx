@@ -62,7 +62,7 @@ Simpan di [**Settings → Secrets and variables → Actions**](https://github.co
 |:--|:--|:--|
 | `tailscale_hostname` | Nama node Tailscale yang bisa diisi sendiri (huruf kecil, angka, strip) | `rdp-runner` |
 | `hostname_mode` | `same_each_run` atau `unique_each_run` | `same_each_run` |
-| `rdp_username` | Nama akun Linux yang login via RDP | `rdp` |
+| `rdp_username` | Nama akun Linux xrdp; **case-sensitive**, sama seperti Windows | `RDP` |
 | `web_username` | Nama akun login browser Webtop | `wfs` |
 | `rdp_password_mode` | `same_from_secret` atau `random_each_run` | `same_from_secret` |
 | `vnc_password_mode` | `same_from_secret` atau `random_each_run` | `same_from_secret` |
@@ -104,7 +104,7 @@ Workflow Linux menampilkan **Dashboard** pada tab **Summary** setiap run aktif d
 
 | Bagian output | Apa yang ditampilkan |
 |:--|:--|
-| **🎯 Recommended Login** | Alamat RDP `100.x.x.x:3389`, username yang dipilih (default `rdp`), tautan browser HTTPS, username web (default `wfs`), dan petunjuk password |
+| **🎯 Recommended Login** | Alamat RDP `100.x.x.x:3389`, username yang dipilih (default **`RDP`**, kapital), tautan browser HTTPS, username web (default `wfs`), dan petunjuk password |
 | **🔗 Connection & Runner Details** | Distro, desktop, image/digest, hostname Tailscale, IP, mode, transport diminta/aktif, port privat, durasi dan link run |
 | **🧪 Service Health** | Autentikasi Webtop HTTPS, status Tailscale, pemeriksaan xrdp, dan batas verifikasi dari sisi runner |
 | **📦 Selected Applications & Install Status** | Semua kategori aplikasi, hasil per-app jika ada, status langkah instalasi opsional, dan ArtCraft |
@@ -114,7 +114,7 @@ Workflow Linux menampilkan **Dashboard** pada tab **Summary** setiap run aktif d
 
 **Hostname default adalah `rdp-runner`**, dapat diganti langsung di kolom `tailscale_hostname` pada **Run workflow**. Mode default **`same_each_run`** menggunakan hostname yang sama pada setiap run, tanpa Run ID. Jika perlu menghindari bentrok antar-run yang aktif bersamaan, pilih `unique_each_run` untuk menambahkan Run ID, contohnya `rdp-runner-42500000000`. Jangan menjalankan dua runner aktif dengan hostname yang sama; Tailscale dapat memberi sufiks berbeda bila masih ada node yang menggunakan nama tersebut.
 
-**Username xrdp default kini `rdp`**, sedangkan username web tetap `wfs`. Keduanya dapat dikustomisasi terpisah. Mode password `same_from_secret` tetap menggunakan secret RDP/VNC yang sama dengan Windows; mode `random_each_run` mengikuti rumus HMAC pada panduan ini.
+**Username xrdp default kini `RDP` (huruf besar, sama seperti Windows)**, sedangkan username web tetap `wfs`. Keduanya dapat dikustomisasi terpisah. Mode password `same_from_secret` tetap menggunakan secret RDP/VNC yang sama dengan Windows; mode `random_each_run` mengikuti rumus HMAC pada panduan ini.
 
 **Keamanan:** log dan Summary tidak pernah menampilkan nilai `RDP_PASSWORD` atau `VNC_PASSWORD` (termasuk password per-run). Status READY membuktikan koneksi dan respons layanan **dari runner**, bukan keberhasilan login grafis dari perangkat lain. Setelah Anda melakukan uji langsung, gunakan URL yang berasal dari run baru yang masih aktif.
 
@@ -127,6 +127,25 @@ Workflow Linux menampilkan **Dashboard** pada tab **Summary** setiap run aktif d
 5. Untuk RDP: di Windows tekan `Win + R` → `mstsc` → masukkan `100.x.x.x:3389` → login dengan `rdp_username` dan password RDP. Untuk web: buka URL HTTPS dan login dengan `web_username` dan password VNC.
 
 Mode `transport=auto` mencoba Tailscale HTTPS Serve `443` sebentar (**maksimal 12 detik**). Jika Serve tidak diaktifkan/diizinkan di tailnet, workflow **langsung menggunakan HTTPS Webtop pada IP Tailscale privat port `6082` tanpa Tailscale Serve**. Fallback menggunakan sertifikat Webtop self-signed sehingga browser mungkin menampilkan peringatan; pastikan IP sesuai Actions Summary. Native xrdp di mode `rdp`/`both` diteruskan pada **IP Tailscale port `3389`** secara privat. `tailnet_https` khusus untuk pengguna yang sudah mengaktifkan Serve + HTTPS Certificates/MagicDNS di tailnet.
+
+## 🌐 Google Chrome dan ekstensi wajib yang sama dengan Windows
+
+**Chrome adalah komponen wajib**, tidak tergantung pilihan `apps_bundle`/IDE. Workflow Linux memasang Google Chrome resmi di Debian, Ubuntu, dan Fedora; di Arch atau Alpine menggunakan Chromium dari repositori distro karena paket Google Chrome native tidak tersedia di sana.
+
+Dua ekstensi yang sudah diwajibkan workflow Windows dipasang melalui kebijakan Chrome Enterprise untuk **seluruh akun lokal**:
+
+| Ekstensi | Chrome Web Store ID | Fungsi |
+|:--|:--|:--|
+| **Cookie-Editor** | `hlkenndednhfkekhgcdicdfddnkalmdm` | Mengelola cookie browser |
+| **GoFullPage** | `fdpohaocaechififmbbbbbknoalclacl` | Screenshot halaman penuh |
+
+Instalasi Chrome dan file kebijakan `ExtensionInstallForcelist` diverifikasi saat setup. **Unduhan ekstensi dari Chrome Web Store berlangsung ketika profil Chrome pertama kali dijalankan dengan koneksi internet**; kebijakan tidak menjamin ekstensi terunduh sebelum Chrome dibuka. Untuk memeriksa, buka `chrome://policy` (klik Reload policies) dan `chrome://extensions`. Login akun Chrome/Google serta sinkronisasi ekstensi lain tidak dapat dipulihkan otomatis tanpa data profil dan otorisasi.
+
+## 🖥️ Perbaikan layar hitam xrdp
+
+Sebelumnya xrdp bisa lolos tes TCP/PAM tetapi menampilkan layar hitam, karena komponen Xfce belum lengkap. Versi terbaru **secara eksplisit memasang `xfwm4` (window manager), `xfdesktop` (desktop/wallpaper), panel, terminal dan DBus**, lalu mengganti `/etc/xrdp/startwm.sh` dengan launcher sesi Xorg/Xfce yang eksplisit.
+
+Tes baru mencoba **login RDP grafis nyata dengan FreeRDP melalui Xvfb** dan memastikan proses `xfce4-session`, `xfwm4` dan `xfdesktop` hidup. Jika tes gagal, log xrdp-sesman dan startup pengguna dicetak sebagai diagnostik. Perlu diperhatikan bahwa mode browser dengan KDE/i3/MATE tetap berbeda dari xrdp yang menggunakan sesi **Xfce** khusus.
 
 ## 📦 Aplikasi — kategori sama dengan Windows
 
@@ -145,7 +164,7 @@ Instalasi aplikasi opsional **tidak mematikan desktop jika gagal**. Installer se
 
 ### 🔧 Perbaikan xrdp dan installer aplikasi (November 2026)
 
-- **Username RDP:** akun Linux bersifat case-sensitive. Bila memasukkan `RDP` (kapital), workflow kini menormalkannya menjadi `rdp` dan menampilkan nama akun efektif pada Summary/log. Login pada klien harus memakai versi huruf kecil.
+- **Username RDP:** akun Linux bersifat case-sensitive. Workflow kini membuat akun **`RDP` (huruf kapital)** secara nyata dan tidak menurunkannya menjadi `rdp`. Pada klien Microsoft Remote Desktop, isi **Username: `RDP`**, tanpa domain, dengan secret `RDP_PASSWORD`. Pastikan memakai workflow run baru dari `main` karena run lama tetap menggunakan konfigurasi sebelumnya.
 - **Akun dan password:** sebelum endpoint RDP dipublikasikan, script memastikan `getent passwd` dan `id` menemukan akun serta melakukan autentikasi PAM melalui `pamtester xrdp-sesman` dengan password secret yang sudah dipilih. Pemeriksaan sebelumnya baru sampai TCP handshake.
 - **Node/npm:** image Ubuntu dapat berisi Node.js 22 dari NodeSource yang sudah membundel npm. Memasang paket `npm` Debian secara terpisah menyebabkan konflik dependensi. Installer sekarang memverifikasi Node dan npm dahulu, lalu hanya memulihkan paket `nodejs` bila perlu. Git, Python, Node, 9Router, dan Codex diverifikasi satu per satu.
 - **GUI/agent tambahan:** Antigravity IDE dicoba dari arsip Linux Google resmi dan ditambahkan shortcut desktop jika executable ditemukan. Arsip itu tidak menyediakan digest SHA-256 terpisah dalam halaman yang diperiksa, sehingga tidak setara dengan verifikasi checksum ArtCraft. Hermes Agent dicoba dari installer resmi stable noninteraktif untuk akun Linux yang akan digunakan, tanpa memaksa login provider.

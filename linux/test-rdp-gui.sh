@@ -20,10 +20,15 @@ echo "[WFS RDP Smoke] Graphical client will authenticate to xrdp as $test_user (
 log="$RUNNER_TEMP/wfs-rdp-gui-client.log"
 (
   set +e
-  cat "$secret" | timeout 80 xvfb-run -a -s '-screen 0 1024x768x24' \
-    "$client" /v:127.0.0.1:13389 /u:"$test_user" \
-    /from-stdin:force /cert:ignore /sec:tls /size:1024x768 \
+  # Only CI dummy credentials are used here; no user secrets.
+  # FreeRDP 3 in Ubuntu 24.04 does not accept /from-stdin:force on
+  # all versions; pass the generated *test* password to the CLI instead.
+  dummy_password="$(cat "$secret")"
+  timeout 80 xvfb-run -a -s '-screen 0 1024x768x24' \
+    "$client" /v:127.0.0.1:13389 /u:"$test_user" /p:"$dummy_password" \
+    /cert:ignore /sec:tls /size:1024x768 \
     /log-level:WARN > "$log" 2>&1
+  unset dummy_password
   exit 0
 ) &
 pid=$!
